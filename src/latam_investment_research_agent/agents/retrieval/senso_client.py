@@ -1,4 +1,4 @@
-"""Senso.ai writer interface (implement with Senso SDK / HTTP in integration step)."""
+"""Senso.ai writer interface (implemented by other team member)."""
 
 from typing import Protocol
 

@@ -1,6 +1,7 @@
 """Unified signal from the relevance filter (upstream input to retrieval)."""
 
 from datetime import datetime
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -31,10 +32,10 @@ class ExtractedMetricPayload(BaseModel):
 
 class MarketSignal(BaseModel):
     """
-    MVP object produced by Nimble + relevance filter.
+    Classified signal produced by Nimble acquisition + relevance filter.
 
-    Retrieval reads this and emits ClickHouse rows, Senso documents, and
-    an analysis packet id.
+    Retrieval emits ClickHouse rows (structured fields), Senso JSON payloads
+    (raw documents), and an analysis packet id.
     """
 
     signal_id: str
@@ -70,6 +71,13 @@ class MarketSignal(BaseModel):
 
     full_text: str | None = None
     full_text_ref: str | None = None
+
+    # Raw document from Nimble — forwarded to Senso as JSON
+    raw_content_type: str | None = None
+    raw_content_body: str | None = None
+    raw_content_encoding: str = "utf-8"
+    nimble_task_id: str | None = None
+    nimble_metadata: dict[str, Any] = Field(default_factory=dict)
 
     store_clickhouse: bool = False
     store_senso: bool = False

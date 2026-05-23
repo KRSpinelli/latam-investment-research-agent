@@ -1,4 +1,4 @@
-"""ClickHouse writer interface (implement with clickhouse-connect in integration step)."""
+"""ClickHouse writer interface (implemented by other team member)."""
 
 from typing import Protocol
 

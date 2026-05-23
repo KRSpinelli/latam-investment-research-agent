@@ -17,6 +17,10 @@ dependencies = [
   "beautifulsoup4>=4.12",
   "polars>=1.0",
   "pydantic>=2.10.0",
+  "fastapi>=0.115.0",
+  "uvicorn[standard]>=0.32.0",
+  "httpx>=0.28.0",
+  "python-dotenv>=1.0.0",
   "pydantic-settings>=2.5",
   "python-dotenv>=1.0",
   "aiohttp>=3.13.5",
@@ -34,6 +38,7 @@ dev = [
 
 [project.scripts]
 latam_investment_research_agent = "latam_investment_research_agent.main:main"
+latam-api = "latam_investment_research_agent.main:run_api"
 
 
 [build-system]
