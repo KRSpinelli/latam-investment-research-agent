@@ -15,6 +15,7 @@ from typing import Any
 
 from .client import SensoClient
 from .companies import BY_TICKER
+from .document_fetch import fetch_text_from_url
 from .kb_scaffold import FolderMap, scaffold_kb
 
 FILING_TYPES = {
@@ -85,4 +86,54 @@ async def ingest_filing(
         title=metadata.document_title(),
         text=text,
         folder_id=folder_id,
+    )
+
+
+async def ingest_from_url(
+    url: str,
+    metadata: FilingMetadata,
+    folder_map: FolderMap | None = None,
+    client: SensoClient | None = None,
+) -> dict[str, Any]:
+    """Fetch a PDF or webpage, extract text, and ingest into the Senso KB.
+
+    HTML pages use full-page text extraction (articles, reports). PDFs use
+    all-page text via ``pdfplumber``. Then delegates to :func:`ingest_filing`.
+
+    Args:
+        url: Public URL of a PDF or static HTML page.
+        metadata: Filing context (ticker, type, year, source URL).
+        folder_map: Optional pre-built ticker → folder_id map from
+            :func:`scaffold_kb`.
+        client: Optional shared :class:`SensoClient`.
+
+    Returns:
+        The Senso KB node response dict from :meth:`SensoClient.kb_create_raw`.
+
+    Raises:
+        DocumentFetchError: If the URL cannot be fetched or parsed.
+        ValueError: If no text could be extracted from the page.
+        ValueError: If ``metadata.ticker`` is not registered in ``companies.py``.
+        KeyError: If no KB folder exists for the ticker.
+    """
+    if not metadata.source_url:
+        metadata = FilingMetadata(
+            ticker=metadata.ticker,
+            filing_type=metadata.filing_type,
+            fiscal_year=metadata.fiscal_year,
+            quarter=metadata.quarter,
+            source_url=url,
+            language=metadata.language,
+            extra=dict(metadata.extra),
+        )
+
+    text = await fetch_text_from_url(url)
+    if not text.strip():
+        raise ValueError(f"No text extracted from {url!r}")
+
+    return await ingest_filing(
+        text=text,
+        metadata=metadata,
+        folder_map=folder_map,
+        client=client,
     )
