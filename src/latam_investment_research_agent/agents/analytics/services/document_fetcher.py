@@ -16,6 +16,10 @@ from io import BytesIO
 
 import httpx
 import pdfplumber
+
+from latam_investment_research_agent.agents.analytics.services.http_fetch_client import (
+    build_document_fetch_client,
+)
 from bs4 import BeautifulSoup
 
 from latam_investment_research_agent.agents.analytics.constants import PAGE_SEPARATOR
@@ -156,7 +160,7 @@ async def fetch_document(source_reference: str) -> str:
         return _fetch_local_pdf(source_reference)
 
     logger.info("Fetching document: %s", source_reference)
-    async with httpx.AsyncClient(follow_redirects=True, timeout=60.0) as http_client:
+    async with build_document_fetch_client() as http_client:
         try:
             response = await http_client.get(source_reference)
             response.raise_for_status()
