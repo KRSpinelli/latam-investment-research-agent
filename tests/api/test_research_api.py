@@ -1,4 +1,5 @@
 from datetime import UTC, datetime
+from unittest.mock import AsyncMock, patch
 
 from fastapi.testclient import TestClient
 
@@ -100,3 +101,37 @@ def test_run_research_pipeline() -> None:
     assert len(body["signals"]) >= 1
     assert body["retrieval"]["signals_processed"] >= 1
     assert body["retrieval"]["analysis_packet_id"] is not None
+
+
+def test_run_research_and_ingest_parallel() -> None:
+    client = _test_client()
+    mock_summary = {
+        "source_reference": "https://example.com/soybean-exports",
+        "total_datasets_found": 1,
+        "datasets_succeeded": [],
+        "datasets_failed": [],
+    }
+    with patch(
+        "latam_investment_research_agent.services.research_and_ingest.ingest_source_reference",
+        new_callable=AsyncMock,
+        return_value=mock_summary,
+    ) as mock_ingest:
+        response = client.post(
+            "/api/v1/research/ingest",
+            json={
+                "query": (
+                    "Identify underfollowed Brazilian companies "
+                    "benefiting from soybean export growth"
+                ),
+                "seed_urls": ["https://example.com/soybean-exports"],
+                "max_documents": 3,
+            },
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["research"]["task_id"].startswith("task_")
+    assert len(body["research"]["documents"]) >= 1
+    assert len(body["ingestion_summaries"]) == 1
+    assert body["ingestion_summaries"][0]["source_reference"] == mock_summary["source_reference"]
+    mock_ingest.assert_awaited_once_with("https://example.com/soybean-exports")

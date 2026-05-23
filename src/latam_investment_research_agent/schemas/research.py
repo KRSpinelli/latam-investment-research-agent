@@ -2,6 +2,10 @@
 
 from pydantic import BaseModel, Field
 
+from latam_investment_research_agent.agents.analytics.models.domain import (
+    DatasetIngestionFailure,
+    DatasetIngestionResult,
+)
 from latam_investment_research_agent.agents.nimble.schemas import NimbleDocument
 from latam_investment_research_agent.agents.retrieval.schemas.market_signal import MarketSignal
 from latam_investment_research_agent.agents.retrieval.schemas.routing import RetrievalOutcome
@@ -39,3 +43,19 @@ class ResearchResponse(BaseModel):
 class ExampleSeedsResponse(BaseModel):
     queries: list[str]
     seed_urls: list[str]
+
+
+class IngestionSummaryResponse(BaseModel):
+    """Per-document outcome from the analytics ingestion graph."""
+
+    source_reference: str
+    total_datasets_found: int
+    datasets_succeeded: list[DatasetIngestionResult]
+    datasets_failed: list[DatasetIngestionFailure]
+
+
+class ResearchWithIngestionResponse(BaseModel):
+    """Research pipeline output plus parallel ClickHouse ingestion per document."""
+
+    research: ResearchResponse
+    ingestion_summaries: list[IngestionSummaryResponse] = Field(default_factory=list)
