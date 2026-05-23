@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from .client import SensoClient
-from .companies import BY_TICKER, BY_SECTOR, SECTORS
+from .companies import BY_SECTOR, BY_TICKER, SECTORS
 
 
 @dataclass
@@ -70,7 +70,8 @@ async def search_memory(
     if ticker:
         company = BY_TICKER.get(ticker.upper())
         if company:
-            folder_prefix = f"latam-alpha/{company.sector}/{ticker.upper()}-{company.name.replace(' ', '')}"
+            slug = f"{ticker.upper()}-{company.name.replace(' ', '')}"
+            folder_prefix = f"latam-alpha/{company.sector}/{slug}"
     elif sector:
         if sector.lower() not in SECTORS:
             raise ValueError(f"Unknown sector {sector!r}. Choose from: {SECTORS}")

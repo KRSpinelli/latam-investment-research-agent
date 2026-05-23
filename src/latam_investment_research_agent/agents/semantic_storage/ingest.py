@@ -99,9 +99,10 @@ async def ingest_filing(
 
     results: list[dict[str, Any]] = []
     for i, chunk in enumerate(chunks):
+        base = f"{metadata.ticker} {metadata.filing_type} {metadata.period_label}"
         doc = {
             "content": chunk,
-            "title": f"{metadata.ticker} {metadata.filing_type} {metadata.period_label} — chunk {i + 1}/{len(chunks)}",
+            "title": f"{base} — chunk {i + 1}/{len(chunks)}",
             "metadata": {**meta, "chunk_index": i, "chunk_total": len(chunks)},
         }
         resp = await c.upsert_document(folder, doc)
