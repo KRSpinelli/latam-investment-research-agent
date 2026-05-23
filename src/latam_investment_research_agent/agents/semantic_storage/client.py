@@ -5,83 +5,120 @@ from typing import Any
 
 import httpx
 
-
 BASE_URL = "https://apiv2.senso.ai/api/v1"
-_DEFAULT_TIMEOUT = 30.0
+_TIMEOUT = 30.0
 
 
 class SensoClient:
-    """Thin async wrapper around the Senso REST API."""
+    """Async wrapper around the Senso REST API (apiv2.senso.ai/api/v1)."""
 
-    def __init__(self, api_key: str | None = None) -> None:
+    def __init__(self, api_key: str | None = None, base_url: str = BASE_URL) -> None:
         key = api_key or os.environ.get("SENSO_API_KEY")
         if not key:
             raise ValueError("SENSO_API_KEY not set — pass api_key or export the env var")
+        self._base = base_url.rstrip("/")
         self._headers = {"X-API-Key": key, "Content-Type": "application/json"}
 
-    # ------------------------------------------------------------------
-    # KB folders
-    # ------------------------------------------------------------------
-
-    async def create_folder(self, path: str) -> dict[str, Any]:
-        """Create a KB folder at the given path (idempotent — returns existing if found)."""
-        async with httpx.AsyncClient(timeout=_DEFAULT_TIMEOUT) as http:
-            r = await http.post(
-                f"{BASE_URL}/kb/folders",
-                headers=self._headers,
-                json={"path": path},
-            )
+    async def _get(self, path: str, params: dict[str, Any] | None = None) -> Any:
+        async with httpx.AsyncClient(timeout=_TIMEOUT) as http:
+            r = await http.get(f"{self._base}{path}", headers=self._headers, params=params)
             r.raise_for_status()
-            return dict(r.json())
+            return r.json()
 
-    async def list_folders(self, prefix: str = "") -> list[dict[str, Any]]:
-        async with httpx.AsyncClient(timeout=_DEFAULT_TIMEOUT) as http:
-            r = await http.get(
-                f"{BASE_URL}/kb/folders",
-                headers=self._headers,
-                params={"prefix": prefix} if prefix else {},
-            )
+    async def _post(self, path: str, body: dict[str, Any]) -> Any:
+        async with httpx.AsyncClient(timeout=_TIMEOUT) as http:
+            r = await http.post(f"{self._base}{path}", headers=self._headers, json=body)
             r.raise_for_status()
-            return list(r.json())
+            return r.json()
 
-    # ------------------------------------------------------------------
-    # Documents (chunks / citeables)
-    # ------------------------------------------------------------------
-
-    async def upsert_document(self, folder_path: str, payload: dict[str, Any]) -> dict[str, Any]:
-        """Ingest a document chunk into a KB folder."""
-        async with httpx.AsyncClient(timeout=_DEFAULT_TIMEOUT) as http:
-            r = await http.post(
-                f"{BASE_URL}/kb/documents",
-                headers=self._headers,
-                json={"folder_path": folder_path, **payload},
-            )
+    async def _put(self, path: str, body: dict[str, Any]) -> Any:
+        async with httpx.AsyncClient(timeout=_TIMEOUT) as http:
+            r = await http.put(f"{self._base}{path}", headers=self._headers, json=body)
             r.raise_for_status()
-            return dict(r.json())
+            return r.json()
 
     # ------------------------------------------------------------------
-    # Semantic search
+    # KB — folders
     # ------------------------------------------------------------------
 
-    async def search(
+    async def kb_root(self) -> dict[str, Any]:
+        """Return the root KB node (contains the root folder ID)."""
+        return dict(await self._get("/org/kb/root"))
+
+    async def kb_children(
+        self, parent_id: str, node_type: str = "folder", limit: int = 100
+    ) -> list[dict[str, Any]]:
+        """List children of a folder node."""
+        data = await self._get(
+            f"/org/kb/nodes/{parent_id}/children",
+            params={"type": node_type, "limit": limit, "offset": 0},
+        )
+        return list(data.get("nodes", []))
+
+    async def kb_create_folder(self, name: str, parent_id: str | None = None) -> dict[str, Any]:
+        """Create a KB folder. Returns the new node (kb_node_id, name, ...)."""
+        body: dict[str, Any] = {"name": name}
+        if parent_id:
+            body["parent_id"] = parent_id
+        return dict(await self._post("/org/kb/folders", body))
+
+    async def kb_find_or_create_folder(
+        self, name: str, parent_id: str | None = None
+    ) -> dict[str, Any]:
+        """Return existing folder by name under parent, or create it."""
+        if parent_id:
+            children = await self.kb_children(parent_id)
+            for node in children:
+                if node.get("name") == name and node.get("type") == "folder":
+                    return node
+        return await self.kb_create_folder(name, parent_id)
+
+    # ------------------------------------------------------------------
+    # KB — raw text content
+    # ------------------------------------------------------------------
+
+    async def kb_create_raw(
+        self,
+        title: str,
+        text: str,
+        folder_id: str,
+        tag_ids: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """Ingest raw text into a KB folder. Senso handles chunking and embedding."""
+        body: dict[str, Any] = {
+            "title": title,
+            "text": text,
+            "kb_folder_node_id": folder_id,
+        }
+        if tag_ids:
+            body["tag_ids"] = tag_ids
+        return dict(await self._post("/org/kb/raw", body))
+
+    async def kb_update_raw(self, node_id: str, text: str) -> dict[str, Any]:
+        """Replace the full text of an existing raw content node."""
+        return dict(await self._put(f"/org/kb/nodes/{node_id}/raw", {"text": text}))
+
+    # ------------------------------------------------------------------
+    # Search
+    # ------------------------------------------------------------------
+
+    async def search_context(
         self,
         query: str,
-        folder_prefix: str = "latam-alpha",
-        top_k: int = 8,
-        filters: dict[str, Any] | None = None,
+        max_results: int = 8,
+        content_ids: list[str] | None = None,
+        require_scoped_ids: bool = False,
     ) -> list[dict[str, Any]]:
-        body: dict[str, Any] = {
-            "query": query,
-            "folder_prefix": folder_prefix,
-            "top_k": top_k,
-        }
-        if filters:
-            body["filters"] = filters
-        async with httpx.AsyncClient(timeout=_DEFAULT_TIMEOUT) as http:
-            r = await http.post(
-                f"{BASE_URL}/kb/search",
-                headers=self._headers,
-                json=body,
-            )
-            r.raise_for_status()
-            return list(r.json().get("results", []))
+        """
+        Return raw content chunks for grounding — no AI answer generation.
+        Pass content_ids to scope search to specific documents.
+        """
+        body: dict[str, Any] = {"query": query, "max_results": max_results}
+        if content_ids:
+            body["content_ids"] = content_ids
+        if require_scoped_ids:
+            body["require_scoped_ids"] = True
+        data = await self._post("/org/search/context", body)
+        if isinstance(data, dict):
+            return list(data.get("chunks", data.get("results", [])))
+        return list(data)

@@ -1,6 +1,14 @@
 from .client import SensoClient
-from .ingest import ingest_filing
+from .ingest import FilingMetadata, ingest_filing
 from .kb_scaffold import scaffold_kb
-from .search import search_memory
+from .search import Chunk, search_for_brief, search_memory
 
-__all__ = ["SensoClient", "ingest_filing", "scaffold_kb", "search_memory"]
+__all__ = [
+    "SensoClient",
+    "FilingMetadata",
+    "ingest_filing",
+    "scaffold_kb",
+    "Chunk",
+    "search_memory",
+    "search_for_brief",
+]
