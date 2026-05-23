@@ -18,6 +18,7 @@ from latam_investment_research_agent.agents.report.models import ChartArtifact
 logger = logging.getLogger(__name__)
 
 _YEAR_COLUMN_PATTERN = re.compile(r"year|period|date|fiscal|ano|safra|month|quarter", re.IGNORECASE)
+_MINIMUM_CHART_POINTS = 3
 _PIE_SLICE_LIMIT = 8
 _PLOT_POINT_LIMIT = 24
 _REQUIRED_CHART_TYPES = ("line", "bar", "pie")
@@ -147,6 +148,89 @@ def _prepare_pie_series(
     return top_categories, top_values
 
 
+def _enumerate_plot_column_pairs(frame: pl.DataFrame) -> list[tuple[str, str]]:
+    """Return category/value column pairs to try for chart generation.
+
+    Args:
+        frame: Query result data.
+
+    Returns:
+        Ordered list of ``(category_column, value_column)`` pairs.
+    """
+    preferred_category = _pick_category_column(frame)
+    category_columns: list[str] = []
+    if preferred_category is not None:
+        category_columns.append(preferred_category)
+    for column_name in frame.columns:
+        if column_name in category_columns:
+            continue
+        if column_name in {
+            "source_reference",
+            "content_hash",
+            "ingestion_timestamp",
+            "_snapshot_table",
+        }:
+            continue
+        if not _is_numeric_column(frame[column_name]):
+            category_columns.append(column_name)
+
+    value_columns = [
+        column_name
+        for column_name in frame.columns
+        if column_name not in {"content_hash", "ingestion_timestamp", "_snapshot_table"}
+        and _is_numeric_column(frame[column_name])
+    ]
+
+    pairs: list[tuple[str, str]] = []
+    seen_pairs: set[tuple[str, str]] = set()
+    for category_column in category_columns:
+        for value_column in value_columns:
+            if category_column == value_column:
+                continue
+            pair = (category_column, value_column)
+            if pair not in seen_pairs:
+                seen_pairs.add(pair)
+                pairs.append(pair)
+
+    if not pairs and value_columns:
+        pairs.append(("index", value_columns[0]))
+    return pairs
+
+
+def _extract_plot_series(
+    frame: pl.DataFrame,
+    category_column: str,
+    value_column: str,
+) -> tuple[list[str], list[float]] | None:
+    """Build category/value lists when enough distinct points exist for charting.
+
+    Args:
+        frame: Query result data.
+        category_column: Label column or ``index`` for row numbers.
+        value_column: Numeric measure column.
+
+    Returns:
+        Category labels and values when at least ``_MINIMUM_CHART_POINTS`` exist;
+        otherwise None.
+    """
+    if category_column == "index":
+        plot_frame = frame.with_row_index(name="index").select(["index", value_column]).drop_nulls()
+    else:
+        plot_frame = frame.select([category_column, value_column]).drop_nulls()
+
+    if plot_frame.is_empty():
+        return None
+
+    categories = [str(value) for value in plot_frame[category_column].to_list()]
+    numeric_values = plot_frame[value_column].cast(pl.Float64, strict=False).to_list()
+    values = [float(value) if value is not None else 0.0 for value in numeric_values]
+
+    prepared_categories, prepared_values = _prepare_plot_series(categories, values)
+    if len(prepared_categories) < _MINIMUM_CHART_POINTS:
+        return None
+    return prepared_categories, prepared_values
+
+
 def _save_chart(
     *,
     output_path: Path,
@@ -219,29 +303,27 @@ def build_charts_from_records(
     if frame.is_empty():
         return []
 
-    category_column = _pick_category_column(frame)
-    value_column = _pick_value_column(frame, category_column)
-    if value_column is None:
-        logger.info("No numeric columns found for chart generation")
+    plot_series: tuple[list[str], list[float], str] | None = None
+    for category_column, value_column in _enumerate_plot_column_pairs(frame):
+        series = _extract_plot_series(frame, category_column, value_column)
+        if series is not None:
+            categories, values = series
+            plot_series = (categories, values, value_column)
+            break
+
+    if plot_series is None:
+        logger.info(
+            "Insufficient chart data: need at least %d points per chart",
+            _MINIMUM_CHART_POINTS,
+        )
         return []
 
-    if category_column is None:
-        category_column = "index"
-        frame = frame.with_row_index(name=category_column)
-
-    plot_frame = frame.select([category_column, value_column]).drop_nulls()
-    if plot_frame.is_empty():
-        return []
-
-    categories = [str(value) for value in plot_frame[category_column].to_list()]
-    numeric_values = plot_frame[value_column].cast(pl.Float64, strict=False).to_list()
-    values = [float(value) if value is not None else 0.0 for value in numeric_values]
-
-    line_categories, line_values = _prepare_plot_series(categories, values)
-    bar_categories, bar_values = _prepare_plot_series(categories, values)
+    categories, values, value_column = plot_series
+    line_categories, line_values = categories, values
+    bar_categories, bar_values = categories, values
     pie_categories, pie_values = _prepare_pie_series(categories, values)
 
-    if not line_values:
+    if len(line_values) < _MINIMUM_CHART_POINTS:
         return []
 
     title_suffix = query[:60] + ("…" if len(query) > 60 else "")
@@ -256,7 +338,7 @@ def build_charts_from_records(
     ]
 
     for chart_type, chart_categories, chart_values in chart_series:
-        if not chart_values:
+        if len(chart_values) < _MINIMUM_CHART_POINTS:
             continue
         chart_title = f"{value_label} ({chart_type}) — {title_suffix}"
         chart_path = output_directory / f"chart_{value_column}_{chart_type}.png"

@@ -7,6 +7,7 @@ until a minimum row budget is met.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 from dataclasses import dataclass, field
@@ -24,6 +25,7 @@ _TABLE_NAME_PATTERN = re.compile(r"^[a-z][a-z0-9_]*$")
 _MINIMUM_REPORT_ROWS = 25
 _ROW_LIMIT_PER_TABLE = 1_000
 _MAX_TABLES_TO_PROBE = 20
+_DEFAULT_MAX_CONCURRENT_SNAPSHOTS = 8
 
 _STOPWORDS = frozenset(
     {
@@ -222,8 +224,12 @@ async def _append_table_snapshots(
     row_limit_per_table: int,
     max_tables: int,
     minimum_rows: int,
+    max_concurrent_snapshots: int = _DEFAULT_MAX_CONCURRENT_SNAPSHOTS,
 ) -> tuple[list[dict[str, Any]], list[str]]:
     """Probe tables until the minimum row budget is met.
+
+    Table snapshots are fetched concurrently (bounded by ``max_concurrent_snapshots``),
+    then merged in ``table_names`` order so relevance ranking is preserved.
 
     Args:
         clickhouse_client: Async ClickHouse client.
@@ -233,27 +239,43 @@ async def _append_table_snapshots(
         row_limit_per_table: Row cap per table snapshot.
         max_tables: Maximum tables to query.
         minimum_rows: Stop when row count reaches this threshold.
+        max_concurrent_snapshots: Maximum concurrent snapshot SELECT calls.
 
     Returns:
         Updated rows and SQL query lists.
     """
     rows = list(existing_rows)
     queries = list(sql_queries)
-    tables_probed = 0
 
-    for table_name in table_names:
+    if len(rows) >= minimum_rows:
+        return rows, queries
+
+    tables_to_probe = table_names[:max_tables]
+    if not tables_to_probe:
+        return rows, queries
+
+    concurrency_limit = max(1, max_concurrent_snapshots)
+    semaphore = asyncio.Semaphore(concurrency_limit)
+
+    async def probe_table(table_name: str) -> tuple[str, list[dict[str, Any]], str | None]:
+        async with semaphore:
+            snapshot_rows, sql_query = await _fetch_rows_from_table(
+                clickhouse_client,
+                table_name,
+                row_limit=row_limit_per_table,
+            )
+            return table_name, snapshot_rows, sql_query
+
+    logger.info(
+        "Probing %d ClickHouse table snapshot(s) with concurrency=%d",
+        len(tables_to_probe),
+        concurrency_limit,
+    )
+    probe_results = await asyncio.gather(*(probe_table(table_name) for table_name in tables_to_probe))
+
+    for table_name, snapshot_rows, sql_query in probe_results:
         if len(rows) >= minimum_rows:
             break
-        if tables_probed >= max_tables:
-            break
-
-        snapshot_rows, sql_query = await _fetch_rows_from_table(
-            clickhouse_client,
-            table_name,
-            row_limit=row_limit_per_table,
-        )
-        tables_probed += 1
-
         if not snapshot_rows or sql_query is None:
             continue
 
@@ -310,6 +332,7 @@ async def ensure_quantitative_data(
     existing_rows: list[dict[str, Any]] | None = None,
     existing_sql_queries: list[str] | None = None,
     minimum_rows: int = _MINIMUM_REPORT_ROWS,
+    max_concurrent_snapshots: int = _DEFAULT_MAX_CONCURRENT_SNAPSHOTS,
 ) -> QuantitativeDataBundle:
     """Guarantee a minimum number of quantitative rows for report generation.
 
@@ -326,6 +349,7 @@ async def ensure_quantitative_data(
         existing_rows: Rows already collected (e.g. from RAG).
         existing_sql_queries: SQL already executed.
         minimum_rows: Target minimum row count.
+        max_concurrent_snapshots: Maximum concurrent table snapshot queries.
 
     Returns:
         Bundle with rows, SQL audit trail, and a human-readable source note.
@@ -358,6 +382,7 @@ async def ensure_quantitative_data(
             row_limit_per_table=_ROW_LIMIT_PER_TABLE,
             max_tables=_MAX_TABLES_TO_PROBE,
             minimum_rows=minimum_rows,
+            max_concurrent_snapshots=max_concurrent_snapshots,
         )
         if len(rows) >= minimum_rows:
             notes.append(
@@ -396,6 +421,7 @@ async def ensure_quantitative_data(
             row_limit_per_table=_ROW_LIMIT_PER_TABLE,
             max_tables=_MAX_TABLES_TO_PROBE,
             minimum_rows=minimum_rows,
+            max_concurrent_snapshots=max_concurrent_snapshots,
         )
 
     if rows:

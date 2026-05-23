@@ -44,6 +44,8 @@ class AnalyticsConfig(BaseSettings):
     llm_provider: str = "openai"
     llm_model_name: str = "gpt-4o-mini"
 
+    clickhouse_max_concurrent_queries: int = 8
+
     test_clickhouse_host: str = "localhost"
     test_clickhouse_port: int = 8443
     test_clickhouse_database: str = "latam_research_test"

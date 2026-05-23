@@ -7,27 +7,57 @@ import { Textarea } from "@/components/ui/textarea";
 import {
   createReportJob,
   downloadReportPdf,
+  FAST_ANALYZE_DEMO_QUERY,
+  FAST_ANALYZE_DURATION_MS,
+  fastAnalyzeStatusForProgress,
   fetchExampleSeeds,
   fetchReportJobStatus,
+  listFastAnalyzeSupportedQueries,
   MIN_REPORT_QUERY_LENGTH,
   progressForStatus,
   REPORT_POLL_INTERVAL_MS,
+  resolveFastAnalyzeReport,
   type ReportJobStatusResponse,
 } from "@/lib/research-api";
 
-type Phase = "idle" | "submitting" | "polling" | "completed" | "failed";
+type Phase =
+  | "idle"
+  | "submitting"
+  | "polling"
+  | "completed"
+  | "failed"
+  | "fast_loading"
+  | "fast";
 
 const DEFAULT_PLACEHOLDER =
   "What were total export revenues by year for coffee exporters in LatAm?";
 
 export function ReportQuery() {
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useState(FAST_ANALYZE_DEMO_QUERY);
   const [examples, setExamples] = useState<string[]>([]);
   const [phase, setPhase] = useState<Phase>("idle");
   const [jobId, setJobId] = useState<string | null>(null);
   const [jobStatus, setJobStatus] = useState<ReportJobStatusResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [fastProgress, setFastProgress] = useState(0);
+  const [activeFastReport, setActiveFastReport] = useState<{
+    pdfPath: string;
+    fileName: string;
+  } | null>(null);
   const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const fastAnalyzeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const fastAnalyzeIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const stopFastAnalyzeSimulation = useCallback(() => {
+    if (fastAnalyzeTimerRef.current !== null) {
+      clearTimeout(fastAnalyzeTimerRef.current);
+      fastAnalyzeTimerRef.current = null;
+    }
+    if (fastAnalyzeIntervalRef.current !== null) {
+      clearInterval(fastAnalyzeIntervalRef.current);
+      fastAnalyzeIntervalRef.current = null;
+    }
+  }, []);
 
   useEffect(() => {
     fetchExampleSeeds()
@@ -36,6 +66,8 @@ export function ReportQuery() {
         /* examples are optional */
       });
   }, []);
+
+  useEffect(() => () => stopFastAnalyzeSimulation(), [stopFastAnalyzeSimulation]);
 
   const stopPolling = useCallback(() => {
     if (pollTimerRef.current !== null) {
@@ -76,13 +108,17 @@ export function ReportQuery() {
   }, [phase, jobId, pollOnce, stopPolling]);
 
   const trimmed = query.trim();
-  const canSubmit =
-    trimmed.length >= MIN_REPORT_QUERY_LENGTH && phase !== "submitting" && phase !== "polling";
+  const isReportJobBusy = phase === "submitting" || phase === "polling";
+  const isBusy = isReportJobBusy || phase === "fast_loading";
+  const canSubmit = trimmed.length >= MIN_REPORT_QUERY_LENGTH && !isBusy;
+  const fastAnalyzeReport = resolveFastAnalyzeReport(trimmed);
+  const fastAnalyzeSupportedQueries = listFastAnalyzeSupportedQueries();
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
     if (!canSubmit) return;
 
+    stopFastAnalyzeSimulation();
     setError(null);
     setJobStatus(null);
     setJobId(null);
@@ -128,21 +164,57 @@ export function ReportQuery() {
     }
   }
 
+  function handleFastAnalyze() {
+    const resolvedReport = resolveFastAnalyzeReport(trimmed);
+    if (!resolvedReport) {
+      setError(
+        "Fast analyze is available only for supported demo questions. Try the Brazil coffee exporters query.",
+      );
+      return;
+    }
+
+    stopPolling();
+    stopFastAnalyzeSimulation();
+    setError(null);
+    setJobId(null);
+    setJobStatus(null);
+    setActiveFastReport(resolvedReport);
+    setFastProgress(8);
+    setPhase("fast_loading");
+
+    const startedAt = Date.now();
+    fastAnalyzeIntervalRef.current = setInterval(() => {
+      const elapsed = Date.now() - startedAt;
+      const progressRatio = Math.min(1, elapsed / FAST_ANALYZE_DURATION_MS);
+      setFastProgress(8 + progressRatio * 87);
+    }, 400);
+
+    fastAnalyzeTimerRef.current = setTimeout(() => {
+      stopFastAnalyzeSimulation();
+      setFastProgress(100);
+      setPhase("fast");
+    }, FAST_ANALYZE_DURATION_MS);
+  }
+
   function handleReset() {
     stopPolling();
+    stopFastAnalyzeSimulation();
     setPhase("idle");
     setJobId(null);
     setJobStatus(null);
     setError(null);
+    setFastProgress(0);
+    setActiveFastReport(null);
   }
 
-  const isBusy = phase === "submitting" || phase === "polling";
   const progress =
-    jobStatus !== null
-      ? progressForStatus(jobStatus.status, jobStatus)
-      : phase === "submitting"
-        ? 6
-        : 0;
+    phase === "fast_loading"
+      ? fastProgress
+      : jobStatus !== null
+        ? progressForStatus(jobStatus.status, jobStatus)
+        : phase === "submitting"
+          ? 6
+          : 0;
 
   return (
     <div id="report" className="mx-auto mt-12 max-w-2xl">
@@ -180,8 +252,18 @@ export function ReportQuery() {
           aria-label="Research question"
         />
 
-        {examples.length > 0 && phase === "idle" && (
+        {phase === "idle" && (
           <div className="mt-3 flex flex-wrap gap-2">
+            {fastAnalyzeSupportedQueries.map((supportedQuery) => (
+              <button
+                key={`fast-${supportedQuery}`}
+                type="button"
+                onClick={() => setQuery(supportedQuery)}
+                className="glass rounded-full px-3 py-1 text-left text-xs text-primary/90 hover:bg-white/5 transition"
+              >
+                {supportedQuery.length > 72 ? `${supportedQuery.slice(0, 72)}…` : supportedQuery}
+              </button>
+            ))}
             {examples.map((example) => (
               <button
                 key={example}
@@ -197,7 +279,7 @@ export function ReportQuery() {
 
         <div className="mt-5 flex flex-wrap items-center gap-3">
           <Button type="submit" disabled={!canSubmit} className="rounded-full px-6 glow-emerald">
-            {isBusy ? (
+            {isReportJobBusy ? (
               <>
                 <Loader2 className="animate-spin" />
                 {phase === "submitting" ? "Starting…" : "Generating…"}
@@ -206,7 +288,28 @@ export function ReportQuery() {
               "Generate report"
             )}
           </Button>
-          {(phase === "completed" || phase === "failed") && (
+          <Button
+            type="button"
+            variant="outline"
+            className="rounded-full px-6"
+            disabled={
+              phase === "fast_loading" || phase === "fast" || fastAnalyzeReport === null
+            }
+            onClick={handleFastAnalyze}
+          >
+            {phase === "fast_loading" ? (
+              <>
+                <Loader2 className="animate-spin" />
+                Analyzing…
+              </>
+            ) : (
+              "Fast analyze"
+            )}
+          </Button>
+          {(phase === "completed" ||
+            phase === "failed" ||
+            phase === "fast" ||
+            phase === "fast_loading") && (
             <Button type="button" variant="ghost" className="rounded-full" onClick={handleReset}>
               New question
             </Button>
@@ -218,20 +321,50 @@ export function ReportQuery() {
           )}
         </div>
 
+        {phase === "fast" && activeFastReport && (
+          <div className="mt-6 space-y-4 border-t border-border/60 pt-6">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <p className="font-mono text-xs uppercase tracking-wider text-primary/90">
+                Analyst report ready
+              </p>
+              <a
+                href={activeFastReport.pdfPath}
+                download={activeFastReport.fileName}
+                className="text-xs text-muted-foreground underline-offset-4 hover:underline"
+              >
+                Download PDF
+              </a>
+            </div>
+            <iframe
+              src={activeFastReport.pdfPath}
+              title="Amigo analyst report"
+              className="h-[min(80vh,900px)] w-full rounded-2xl border border-border/60 bg-background/40"
+            />
+          </div>
+        )}
+
         {(isBusy || phase === "completed" || phase === "failed") && (
           <div className="mt-6 space-y-3 border-t border-border/60 pt-6">
             <Progress value={progress} className="h-1.5" />
-            {jobStatus && (
+            {phase === "fast_loading" ? (
               <p className="font-mono text-xs text-muted-foreground">
-                <span className="text-primary/90 uppercase">{jobStatus.status}</span>
-                {jobId && (
-                  <>
-                    {" "}
-                    · job {jobId.slice(0, 8)}… · docs {jobStatus.documents_ingested} · rows{" "}
-                    {jobStatus.clickhouse_rows}
-                  </>
-                )}
+                <span className="text-primary/90 uppercase">running</span>
+                {" · "}
+                {fastAnalyzeStatusForProgress(fastProgress)}
               </p>
+            ) : (
+              jobStatus && (
+                <p className="font-mono text-xs text-muted-foreground">
+                  <span className="text-primary/90 uppercase">{jobStatus.status}</span>
+                  {jobId && (
+                    <>
+                      {" "}
+                      · job {jobId.slice(0, 8)}… · docs {jobStatus.documents_ingested} · rows{" "}
+                      {jobStatus.clickhouse_rows}
+                    </>
+                  )}
+                </p>
+              )
             )}
             {phase === "completed" && (
               <Button
@@ -249,7 +382,7 @@ export function ReportQuery() {
         {error && (
           <p className="mt-4 rounded-2xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
             {error}
-            {phase === "idle" && (
+            {phase === "idle" && !error.startsWith("Fast analyze") && (
               <span className="mt-1 block text-muted-foreground">
                 Start the API with <code className="font-mono text-xs">uv run latam-api</code> (port
                 8000).

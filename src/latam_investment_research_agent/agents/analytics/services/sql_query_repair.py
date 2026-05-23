@@ -92,7 +92,37 @@ def _is_aggregate_expression(expression: str) -> bool:
     Returns:
         True if the expression contains SUM/COUNT/any/etc.
     """
-    return bool(_AGGREGATE_FUNCTION_PATTERN.search(expression))
+    stripped_expression = re.sub(
+        r"(?i)\bany\s*\(\s*source_reference\s*\)\s*(?:as\s+source_reference\s*)?",
+        "",
+        expression,
+    ).strip()
+    if not stripped_expression:
+        return False
+    return bool(_AGGREGATE_FUNCTION_PATTERN.search(stripped_expression))
+
+
+def _find_group_by_tail_boundary(tail: str) -> re.Match[str] | None:
+    """Find where the GROUP BY column list ends in a query suffix.
+
+    Args:
+        tail: SQL text immediately following ``GROUP BY``.
+
+    Returns:
+        Match for the next ORDER BY, HAVING, or LIMIT clause, if any.
+    """
+    clause_matches = [
+        match
+        for match in (
+            re.search(r"(?i)\border\s+by\b", tail),
+            re.search(r"(?i)\bhaving\b", tail),
+            re.search(r"(?i)\blimit\b", tail),
+        )
+        if match is not None
+    ]
+    if not clause_matches:
+        return None
+    return min(clause_matches, key=lambda match: match.start())
 
 
 def _remove_invalid_any_without_group_by(sql_query: str) -> str:
@@ -138,7 +168,7 @@ def _extend_group_by_for_bare_select_columns(sql_query: str) -> str:
         return sql_query
 
     tail = sql_query[group_by_match.end() :]
-    tail_boundary = _ORDER_OR_LIMIT_PATTERN.search(tail)
+    tail_boundary = _find_group_by_tail_boundary(tail)
     group_by_list = tail[: tail_boundary.start()] if tail_boundary else tail
     suffix = tail[tail_boundary.start() :] if tail_boundary else ""
 
@@ -217,7 +247,7 @@ def _filter_unknown_columns(sql_query: str, schema: TableSchema) -> str:
         return f"{rebuilt_select}{remainder}"
 
     tail = remainder[group_by_match.end() :]
-    tail_boundary = _ORDER_OR_LIMIT_PATTERN.search(tail)
+    tail_boundary = _find_group_by_tail_boundary(tail)
     group_by_list = tail[: tail_boundary.start()] if tail_boundary else tail
     suffix = tail[tail_boundary.start() :] if tail_boundary else ""
 
@@ -236,6 +266,113 @@ def _filter_unknown_columns(sql_query: str, schema: TableSchema) -> str:
     )
 
 
+def _query_has_aggregates(sql_query: str) -> bool:
+    """Return True when the SELECT list contains aggregate functions.
+
+    Args:
+        sql_query: SQL query string.
+
+    Returns:
+        True when SUM/COUNT/AVG/etc. appear in the SELECT list.
+    """
+    from_match = _FROM_TABLE_PATTERN.search(sql_query)
+    if from_match is None:
+        return False
+    select_list = sql_query[: from_match.start()]
+    select_list = re.sub(r"(?is)^\s*select\s+", "", select_list).strip()
+    if not select_list or select_list == "*":
+        return False
+    return any(_is_aggregate_expression(expression) for expression in _split_select_list(select_list))
+
+
+def _rewrite_select_expressions_for_aggregates(
+    expressions: list[str],
+) -> tuple[list[str], list[str]]:
+    """Rewrite SELECT expressions for aggregate queries and collect GROUP BY keys.
+
+    Args:
+        expressions: SELECT list expressions.
+
+    Returns:
+        Tuple of rewritten expressions and non-aggregate GROUP BY column names.
+    """
+    rewritten_expressions: list[str] = []
+    group_by_columns: list[str] = []
+    for expression in expressions:
+        if _is_aggregate_expression(expression):
+            rewritten_expressions.append(expression)
+            continue
+        output_name = _expression_output_name(expression)
+        if output_name.lower() == _SOURCE_REFERENCE_COLUMN:
+            if re.search(r"(?i)\bany\s*\(\s*source_reference\s*\)", expression):
+                rewritten_expressions.append(expression)
+            else:
+                rewritten_expressions.append(
+                    f"any({_SOURCE_REFERENCE_COLUMN}) AS {_SOURCE_REFERENCE_COLUMN}"
+                )
+            continue
+        rewritten_expressions.append(expression)
+        group_by_columns.append(output_name)
+    return rewritten_expressions, group_by_columns
+
+
+def _insert_group_by_before_suffix(sql_query: str, group_by_columns: list[str]) -> str:
+    """Insert a GROUP BY clause before ORDER BY, HAVING, or LIMIT.
+
+    Args:
+        sql_query: SQL query string without GROUP BY.
+        group_by_columns: Columns to group by.
+
+    Returns:
+        Query with GROUP BY inserted.
+    """
+    if not group_by_columns:
+        return sql_query
+    group_by_clause = f" GROUP BY {', '.join(group_by_columns)}"
+    boundary_match = _ORDER_OR_LIMIT_PATTERN.search(sql_query)
+    if boundary_match is None:
+        return sql_query + group_by_clause
+    insert_position = boundary_match.start()
+    return f"{sql_query[:insert_position]}{group_by_clause} {sql_query[insert_position:]}"
+
+
+def _repair_aggregate_select(sql_query: str) -> str:
+    """Ensure aggregate queries wrap ``source_reference`` and include GROUP BY keys.
+
+    Args:
+        sql_query: SQL query string.
+
+    Returns:
+        Repaired aggregate query.
+    """
+    from_match = _FROM_TABLE_PATTERN.search(sql_query)
+    if from_match is None:
+        return sql_query
+
+    select_list = sql_query[: from_match.start()]
+    select_list = re.sub(r"(?is)^\s*select\s+", "", select_list).strip()
+    if not select_list or select_list == "*":
+        return sql_query
+
+    expressions = _split_select_list(select_list)
+    if not any(_is_aggregate_expression(expression) for expression in expressions):
+        return sql_query
+
+    rewritten_expressions, group_by_columns = _rewrite_select_expressions_for_aggregates(
+        expressions
+    )
+    rebuilt_select = f"SELECT {', '.join(rewritten_expressions)}"
+    remainder = sql_query[from_match.start() :]
+    repaired = f"{rebuilt_select}{remainder}"
+
+    if _GROUP_BY_PATTERN.search(repaired):
+        return _extend_group_by_for_bare_select_columns(repaired)
+
+    if group_by_columns:
+        repaired = _insert_group_by_before_suffix(repaired, group_by_columns)
+    return repaired
+
+
 def repair_clickhouse_select(
     sql_query: str,
     table_schema: TableSchema | None = None,
@@ -250,9 +387,20 @@ def repair_clickhouse_select(
         Repaired SELECT query string.
     """
     repaired = sql_query.strip().rstrip(";")
-    repaired = _remove_invalid_any_without_group_by(repaired)
+
+    if _query_has_aggregates(repaired):
+        repaired = _repair_aggregate_select(repaired)
+    else:
+        repaired = _remove_invalid_any_without_group_by(repaired)
+
     if _GROUP_BY_PATTERN.search(repaired):
         repaired = _extend_group_by_for_bare_select_columns(repaired)
+
     if table_schema is not None:
         repaired = _filter_unknown_columns(repaired, table_schema)
+        if _query_has_aggregates(repaired):
+            repaired = _repair_aggregate_select(repaired)
+        if _GROUP_BY_PATTERN.search(repaired):
+            repaired = _extend_group_by_for_bare_select_columns(repaired)
+
     return repaired

@@ -26,6 +26,60 @@ export interface ExampleSeedsResponse {
 export const MIN_REPORT_QUERY_LENGTH = 8;
 export const REPORT_POLL_INTERVAL_MS = 5000;
 
+/** Demo question pre-mapped to a static analyst PDF for the fast-analyze flow. */
+export const FAST_ANALYZE_DEMO_QUERY =
+  "What are the most promising coffee exporters in brazil?";
+
+/** Simulated analysis duration before the fast-analyze sample PDF is shown. */
+export const FAST_ANALYZE_DURATION_MS = 20_000;
+
+/** Normalize a research question for fast-analyze dictionary lookup. */
+export function normalizeQueryForFastAnalyze(query: string): string {
+  return query
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .replace(/[?.!]+$/, "");
+}
+
+/**
+ * Fast-analyze only: natural-language questions mapped to PDFs in ``frontend/public``.
+ * Keys are normalized with ``normalizeQueryForFastAnalyze``.
+ */
+const FAST_ANALYZE_QUERY_REPORTS: Readonly<Record<string, string>> = {
+  [normalizeQueryForFastAnalyze(FAST_ANALYZE_DEMO_QUERY)]: "amigo_report_full.pdf",
+};
+
+/** Resolve a static PDF for the fast-analyze flow, if the question is supported. */
+export function resolveFastAnalyzeReport(
+  query: string,
+): { pdfPath: string; fileName: string } | null {
+  const fileName = FAST_ANALYZE_QUERY_REPORTS[normalizeQueryForFastAnalyze(query)];
+  if (!fileName) {
+    return null;
+  }
+  return { pdfPath: `/${fileName}`, fileName };
+}
+
+/** Return supported fast-analyze demo questions (for UI hints). */
+export function listFastAnalyzeSupportedQueries(): string[] {
+  return Object.keys(FAST_ANALYZE_QUERY_REPORTS).map((normalized) => {
+    if (normalized === normalizeQueryForFastAnalyze(FAST_ANALYZE_DEMO_QUERY)) {
+      return FAST_ANALYZE_DEMO_QUERY;
+    }
+    return normalized;
+  });
+}
+
+/** Progress label for the fast-analyze loading simulation. */
+export function fastAnalyzeStatusForProgress(progressPercent: number): string {
+  if (progressPercent < 20) return "Starting research pipeline…";
+  if (progressPercent < 45) return "Crawling sources and ingesting metrics…";
+  if (progressPercent < 70) return "Running ClickHouse analytics queries…";
+  if (progressPercent < 88) return "Generating narrative and charts…";
+  return "Rendering analyst PDF…";
+}
+
 /** API origin; empty string uses same origin (Vite dev proxy → latam-api). */
 export function getApiBaseUrl(): string {
   const base = import.meta.env.VITE_API_BASE_URL as string | undefined;

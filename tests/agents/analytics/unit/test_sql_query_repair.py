@@ -37,6 +37,39 @@ def test_repair_extends_group_by_for_bare_select_columns() -> None:
     assert "GROUP BY terminal, ytd_value, market_share_percentage" in repaired
 
 
+def test_repair_adds_group_by_for_aggregate_without_group_by() -> None:
+    """Aggregate queries missing GROUP BY receive grouping keys and ``any(source_reference)``."""
+    sql_query = (
+        "SELECT source_reference, year, SUM(bags) AS total_bags "
+        "FROM average_coffee_prices_over_the_last_10_years LIMIT 10000"
+    )
+    repaired = repair_clickhouse_select(sql_query)
+    assert "GROUP BY year" in repaired
+    assert "any(source_reference)" in repaired.lower()
+
+
+def test_repair_adds_group_by_for_multi_column_aggregate() -> None:
+    """Every non-aggregate column is grouped when aggregates omit GROUP BY."""
+    sql_query = (
+        "SELECT source_reference, region, MIN(rank) AS best_rank "
+        "FROM cooxup_brand_ranking_in_superhiper_guide_2025 "
+        "WHERE region = 'Brazil' LIMIT 10000"
+    )
+    repaired = repair_clickhouse_select(sql_query)
+    assert "GROUP BY region" in repaired
+    assert "any(source_reference)" in repaired.lower()
+
+
+def test_repair_adds_group_by_for_partial_aggregate_select() -> None:
+    """Bare dimension columns in aggregate SELECT lists are grouped."""
+    sql_query = (
+        "SELECT category, SUM(rank) AS total_rank, any(source_reference) AS source_reference "
+        "FROM cooxup_brand_ranking_in_superhiper_guide_2025 LIMIT 10000"
+    )
+    repaired = repair_clickhouse_select(sql_query)
+    assert "GROUP BY category" in repaired
+
+
 def test_repair_drops_unknown_group_by_column_using_schema() -> None:
     """Invented columns such as ``month`` are removed when schema is provided."""
     schema = TableSchema(

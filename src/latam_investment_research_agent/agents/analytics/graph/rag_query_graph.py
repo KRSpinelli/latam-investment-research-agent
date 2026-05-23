@@ -36,6 +36,7 @@ from latam_investment_research_agent.agents.analytics.nodes.rag.build_rag_respon
     build_rag_response_node,
 )
 from latam_investment_research_agent.agents.analytics.nodes.rag.execute_queries_node import (
+    _DEFAULT_MAX_CONCURRENT_QUERIES,
     execute_queries_node,
 )
 from latam_investment_research_agent.agents.analytics.nodes.rag.export_results_node import (
@@ -127,7 +128,15 @@ def build_rag_query_graph(
     )
     graph_builder.add_node(
         "execute_queries",
-        functools.partial(execute_queries_node, clickhouse_client=clickhouse_client),
+        functools.partial(
+            execute_queries_node,
+            clickhouse_client=clickhouse_client,
+            max_concurrent_queries=(
+                config.clickhouse_max_concurrent_queries
+                if config is not None
+                else _DEFAULT_MAX_CONCURRENT_QUERIES
+            ),
+        ),
     )
     graph_builder.add_node("export_results", export_results_node)
     graph_builder.add_node("build_rag_response", build_rag_response_node)

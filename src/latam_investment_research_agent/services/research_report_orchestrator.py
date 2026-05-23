@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from pathlib import Path
 from typing import Any
@@ -29,7 +30,7 @@ from latam_investment_research_agent.agents.report.pdf_review_agent import (
     review_report_formatting,
 )
 from latam_investment_research_agent.agents.semantic_storage.search import search_memory
-from latam_investment_research_agent.schemas.research import ResearchRequest
+from latam_investment_research_agent.schemas.research import ResearchRequest, ResearchWithIngestionResponse
 from latam_investment_research_agent.services.report_quantitative_fallback import (
     ensure_quantitative_data,
 )
@@ -47,31 +48,60 @@ _EMPTY_RAG_OUTPUT: RAGQueryOutput = {
 }
 
 
-async def run_report_pipeline(
-    request: ResearchRequest,
-    pipeline: ResearchPipeline,
-    *,
-    job_directory: Path,
-) -> tuple[ReportContext, bytes]:
-    """Run the full analyst report pipeline and return context plus PDF bytes.
+async def _search_senso_for_report(
+    query: str,
+    ingestion: ResearchWithIngestionResponse,
+) -> list[Any]:
+    """Run Senso memory search for report qualitative context.
 
     Args:
-        request: Research query and optional seed URLs.
-        pipeline: Configured research pipeline.
-        job_directory: Writable directory for exports, charts, and the PDF.
+        query: Research question.
+        ingestion: Research plus ingestion outcomes (for scoped content IDs).
 
     Returns:
-        Tuple of report context and rendered PDF bytes.
+        Senso search chunks, or an empty list on failure.
     """
-    job_directory.mkdir(parents=True, exist_ok=True)
+    senso_content_ids = [
+        result.kb_node_id
+        for result in ingestion.senso_ingestion_results
+        if result.kb_node_id and not result.error
+    ]
+    logger.info("Report pipeline: Senso search (%d scoped ids)", len(senso_content_ids))
+    try:
+        senso_chunks = await search_memory(
+            query,
+            max_results=12,
+            content_ids=senso_content_ids or None,
+        )
+        if not senso_chunks and senso_content_ids:
+            logger.info("Scoped Senso search returned no chunks; retrying org-wide")
+            senso_chunks = await search_memory(query, max_results=12)
+        return senso_chunks
+    except Exception as error:
+        logger.warning("Senso search failed: %s", error)
+        return []
 
-    logger.info("Report pipeline: research and ingestion")
-    ingestion = await run_research_and_ingest(request, pipeline)
 
-    rag_output: RAGQueryOutput = _EMPTY_RAG_OUTPUT
+async def _run_clickhouse_rag_phase(
+    request: ResearchRequest,
+    ingestion: ResearchWithIngestionResponse,
+    job_directory: Path,
+    analytics_config: AnalyticsConfig,
+) -> tuple[RAGQueryOutput, list[dict[str, Any]]]:
+    """Run the RAG graph and quantitative fallback against ClickHouse.
+
+    Args:
+        request: Research request.
+        ingestion: Ingestion outcomes from this session.
+        job_directory: Job export directory.
+        analytics_config: Analytics configuration.
+
+    Returns:
+        Tuple of RAG output metadata and merged quantitative rows.
+    """
+    rag_output: RAGQueryOutput = dict(_EMPTY_RAG_OUTPUT)
     query_result_records: list[dict[str, Any]] = []
 
-    analytics_config = AnalyticsConfig()
     async with managed_clickhouse_client(analytics_config) as clickhouse_client:
         logger.info("Report pipeline: ClickHouse RAG query")
         rag_graph = build_rag_query_graph(
@@ -103,6 +133,7 @@ async def run_report_pipeline(
             clickhouse_client,
             existing_rows=query_result_records,
             existing_sql_queries=list(rag_output.get("sql_queries_used", [])),
+            max_concurrent_snapshots=analytics_config.clickhouse_max_concurrent_queries,
         )
         query_result_records = quantitative_bundle.rows
         rag_output["row_count"] = len(query_result_records)
@@ -113,24 +144,36 @@ async def run_report_pipeline(
                 f"{quantitative_bundle.data_source_note}"
             ).strip()
 
-    senso_content_ids = [
-        result.kb_node_id
-        for result in ingestion.senso_ingestion_results
-        if result.kb_node_id and not result.error
-    ]
-    logger.info("Report pipeline: Senso search (%d scoped ids)", len(senso_content_ids))
-    try:
-        senso_chunks = await search_memory(
-            request.query,
-            max_results=12,
-            content_ids=senso_content_ids or None,
-        )
-        if not senso_chunks and senso_content_ids:
-            logger.info("Scoped Senso search returned no chunks; retrying org-wide")
-            senso_chunks = await search_memory(request.query, max_results=12)
-    except Exception as error:
-        logger.warning("Senso search failed: %s", error)
-        senso_chunks = []
+    return rag_output, query_result_records
+
+
+async def run_report_pipeline(
+    request: ResearchRequest,
+    pipeline: ResearchPipeline,
+    *,
+    job_directory: Path,
+) -> tuple[ReportContext, bytes]:
+    """Run the full analyst report pipeline and return context plus PDF bytes.
+
+    Args:
+        request: Research query and optional seed URLs.
+        pipeline: Configured research pipeline.
+        job_directory: Writable directory for exports, charts, and the PDF.
+
+    Returns:
+        Tuple of report context and rendered PDF bytes.
+    """
+    job_directory.mkdir(parents=True, exist_ok=True)
+
+    logger.info("Report pipeline: research and ingestion")
+    ingestion = await run_research_and_ingest(request, pipeline)
+
+    analytics_config = AnalyticsConfig()
+    logger.info("Report pipeline: ClickHouse RAG + Senso search (parallel)")
+    (rag_output, query_result_records), senso_chunks = await asyncio.gather(
+        _run_clickhouse_rag_phase(request, ingestion, job_directory, analytics_config),
+        _search_senso_for_report(request.query, ingestion),
+    )
 
     context = ReportContext(
         query=request.query,
