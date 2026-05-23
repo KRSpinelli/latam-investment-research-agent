@@ -1,4 +1,5 @@
 import heroImg from "@/assets/hero-ambient.jpg";
+import { ReportQuery } from "@/components/site/ReportQuery";
 
 export function Hero() {
   return (
@@ -31,6 +32,8 @@ export function Hero() {
           structured metrics, and generates grounded investment theses — every claim
           traceable to a source.
         </p>
+
+        <ReportQuery />
 
         <div className="mt-10 flex flex-wrap justify-center items-center gap-3">
           <a href="#examples" className="group inline-flex items-center gap-2 bg-primary text-primary-foreground rounded-full px-6 py-3 text-sm font-medium hover:opacity-90 transition glow-emerald">

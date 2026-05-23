@@ -8,6 +8,8 @@ Requires API server:
     uv run latam-api
 
 Or set API_BASE_URL to a running instance (default http://127.0.0.1:8000).
+
+The same flow is available on the Amigo.ai homepage (cd frontend && npm run dev) with no authentication.
 """
 
 from __future__ import annotations
@@ -18,7 +20,7 @@ import time
 
 import httpx
 
-DEFAULT_QUERY = "What were total export revenues by year for coffee exporters in Brazil?"
+DEFAULT_QUERY = "What were total export revenues by year for coffee exporters in LatAm?"
 DEFAULT_BASE_URL = "http://127.0.0.1:8000"
 POLL_INTERVAL_SECONDS = 5
 POLL_REQUEST_TIMEOUT_SECONDS = 120.0
