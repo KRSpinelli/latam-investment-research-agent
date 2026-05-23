@@ -7,7 +7,9 @@ requires-python = ">=3.12"
 authors = [
   { name = "Kyle Spinelli" }
 ]
-dependencies = []
+dependencies = [
+  "httpx>=0.27.0",
+]
 
 [project.optional-dependencies]
 dev = [
