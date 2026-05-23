@@ -18,6 +18,9 @@ from latam_investment_research_agent.agents.analytics.services.document_fetcher 
     _extract_text_from_pdf_bytes,
     _is_pdf_content_type,
 )
+from latam_investment_research_agent.agents.analytics.services.http_fetch_client import (
+    build_document_fetch_client,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -76,7 +79,7 @@ async def fetch_text_from_url(url: str) -> str:
         raise ValueError(f"URL must be http or https, got: {url!r}")
 
     logger.info("Fetching document for Senso: %s", url)
-    async with httpx.AsyncClient(follow_redirects=True, timeout=60.0) as http_client:
+    async with build_document_fetch_client() as http_client:
         try:
             response = await http_client.get(url)
             response.raise_for_status()
