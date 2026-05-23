@@ -22,9 +22,12 @@ from typing import Any
 
 import polars
 
+from latam_investment_research_agent.agents.analytics.constants import MANDATORY_AUDIT_COLUMNS
 from latam_investment_research_agent.agents.analytics.models.rag_state import RAGQueryState
 
 logger = logging.getLogger(__name__)
+
+_SOURCE_REFERENCE_COLUMN = MANDATORY_AUDIT_COLUMNS[0]
 
 _SLUG_MAX_LENGTH = 40
 _NON_ALPHANUMERIC_PATTERN = re.compile(r"[^a-z0-9]+")
@@ -59,6 +62,31 @@ def _generate_export_filename(question: str) -> str:
     return f"{timestamp}_{slug}.csv"
 
 
+def _prepare_export_dataframe(records: list[dict[str, Any]]) -> polars.DataFrame:
+    """Build a Polars DataFrame for CSV export with ``source_reference`` first.
+
+    Args:
+        records: Merged query result rows.
+
+    Returns:
+        A DataFrame guaranteed to include a ``source_reference`` column.
+    """
+    normalized_records: list[dict[str, Any]] = []
+    for record in records:
+        export_row = dict(record)
+        if _SOURCE_REFERENCE_COLUMN not in export_row:
+            export_row[_SOURCE_REFERENCE_COLUMN] = None
+        normalized_records.append(export_row)
+
+    dataframe = polars.from_dicts(normalized_records)
+    other_columns = [
+        column_name
+        for column_name in dataframe.columns
+        if column_name != _SOURCE_REFERENCE_COLUMN
+    ]
+    return dataframe.select([_SOURCE_REFERENCE_COLUMN, *other_columns])
+
+
 async def export_results_node(state: RAGQueryState) -> dict[str, Any]:
     """Write query result records to a CSV file using Polars.
 
@@ -87,7 +115,7 @@ async def export_results_node(state: RAGQueryState) -> dict[str, Any]:
     filename = _generate_export_filename(question)
     absolute_file_path = export_path / filename
 
-    dataframe = polars.from_dicts(records)
+    dataframe = _prepare_export_dataframe(records)
     dataframe.write_csv(str(absolute_file_path))
 
     logger.info(

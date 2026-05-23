@@ -26,7 +26,7 @@ from latam_investment_research_agent.agents.analytics.graph.ingestion_graph impo
     build_ingestion_graph,
 )
 from latam_investment_research_agent.agents.analytics.providers.clickhouse_provider import (  # noqa: E402
-    create_clickhouse_client,
+    managed_clickhouse_client,
 )
 
 DEFAULT_SOURCE = (
@@ -39,13 +39,9 @@ async def main(source_reference: str) -> None:
     print(f"Ingesting: {source_reference}\n")
 
     config = AnalyticsConfig()
-    clickhouse_client = await create_clickhouse_client(config)
-    graph = build_ingestion_graph(config=config, clickhouse_client=clickhouse_client)
-
-    try:
+    async with managed_clickhouse_client(config) as clickhouse_client:
+        graph = build_ingestion_graph(config=config, clickhouse_client=clickhouse_client)
         result = await graph.ainvoke({"source_reference": source_reference})
-    finally:
-        await clickhouse_client.close()
 
     summary = result["ingestion_summary"]
 
