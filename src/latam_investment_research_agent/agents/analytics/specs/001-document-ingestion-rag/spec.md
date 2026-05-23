@@ -141,8 +141,13 @@ contains year and volume columns, and the provided SQL query is valid and reprod
   → System applies locale-aware parsing based on document language/region metadata; ambiguous values are flagged in an `extraction_notes` column.
 - What happens when ClickHouse is unreachable during ingestion?
   → System halts ingestion, reports the connection failure, and does not partially commit data.
-- What happens when the RAG agent generates a SQL query that returns more than a configurable row limit?
-  → The export is truncated to the limit, the truncation is noted in the rationale output, and the full query is still returned.
+- What happens when a ClickHouse write fails after some datasets have already been committed?
+  → Previously committed rows are retained (no rollback); the agent logs the failure with the
+  failed dataset's identity and error detail, continues attempting remaining datasets, and
+  returns a structured ingestion summary listing which datasets succeeded and which failed.
+- What happens when the RAG agent generates a SQL query that returns more than the row limit?
+  → The export is truncated to 10,000 rows (default, caller-configurable), the truncation is
+  noted in the rationale output, and the full SQL query is still returned.
 
 ---
 
@@ -155,8 +160,10 @@ contains year and volume columns, and the provided SQL query is valid and reprod
 - **FR-002**: The ingestion agent MUST extract all numerical data from the source document along
   with contextual labels (e.g., row/column headers, surrounding text) sufficient to categorize
   the data semantically.
-- **FR-003**: For each extracted dataset, the ingestion agent MUST query the existing ClickHouse
-  schema to determine whether a semantically compatible table exists before writing any data.
+- **FR-003**: For each extracted dataset, the ingestion agent MUST retrieve existing ClickHouse
+  table names and their column schemas, then invoke an LLM-based routing node that returns
+  either the name of a compatible existing table or an instruction to create a new table;
+  this decision MUST be made before writing any data.
 - **FR-004**: If a compatible table exists, the ingestion agent MUST append new rows to that
   table without altering its schema (unless the new data introduces additional columns, in which
   case schema migration MUST be applied).
@@ -176,10 +183,21 @@ contains year and volume columns, and the provided SQL query is valid and reprod
 - **FR-011**: The RAG query agent MUST return, in its response: (a) the absolute path to the
   exported file, (b) a human-readable rationale explaining why the retrieved data is relevant to
   the question, and (c) the exact SQL query or queries used.
-- **FR-012**: The RAG query agent MUST be a separate, independently invocable agent — it MUST
-  NOT share runtime state or process with the ingestion agent.
+- **FR-012**: The RAG query agent MUST be implemented as a separate compiled LangGraph graph —
+  it MUST NOT share runtime state with the ingestion agent graph, and MUST be independently
+  invocable by the parent orchestrator.
 - **FR-013**: Both agents MUST log all operations (ingestion events, table routing decisions,
   query construction, export events) with structured log entries.
+- **FR-014**: Upon completion of an ingestion run (whether fully successful or partially failed),
+  the ingestion agent MUST return a structured ingestion summary listing each extracted dataset,
+  its routing decision (table name used or created), write success or failure status, and any
+  error detail for failed datasets.
+- **FR-015**: All ClickHouse connection settings (host, port, database, username, password) MUST
+  be supplied exclusively via environment variables. A `.env.sample` file documenting every
+  required variable with placeholder values MUST be included in the repository.
+- **FR-016**: The RAG query agent MUST apply a default maximum row limit of 10,000 rows to all
+  CSV exports. The caller MAY override this limit. When the limit is reached, the truncation
+  MUST be noted in the rationale output returned alongside the file path.
 
 ### Key Entities
 
@@ -221,6 +239,16 @@ contains year and volume columns, and the provided SQL query is valid and reprod
 
 ---
 
+## Clarifications
+
+### Session 2026-05-23
+
+- Q: How are the ingestion and RAG query agents invoked? → A: LangGraph-native — both agents are compiled LangGraph graph objects invoked programmatically by the parent LATAM investment research agent orchestrator; no CLI or HTTP server interface.
+- Q: How does the ingestion agent determine semantic compatibility between an extracted dataset and an existing ClickHouse table? → A: LLM judgment — the routing node passes the extracted dataset's context labels and structure alongside retrieved existing table names and column schemas to an LLM call; the LLM returns the target table name or "create new".
+- Q: If ingestion partially fails mid-document (some datasets written, then an error), what happens to already-committed rows? → A: Commit partial — rows already written are retained; each failure is logged with dataset identity and error detail; the agent returns a structured ingestion summary listing succeeded and failed datasets.
+- Q: How are ClickHouse connection credentials and settings supplied to the agents? → A: Environment variables; a `.env.sample` file documenting all required variables MUST be provided in the repository.
+- Q: What is the default maximum row limit for CSV exports from the RAG query agent? → A: 10,000 rows (configurable by the caller; truncation noted in the rationale output when limit is reached).
+
 ## Assumptions
 
 - Source documents are publicly accessible (no authentication required for URLs); authenticated
@@ -229,6 +257,9 @@ contains year and volume columns, and the provided SQL query is valid and reprod
   out of scope for v1 but the architecture MUST not preclude adding OCR in a future version.
 - The ClickHouse instance is pre-provisioned and network-accessible; the agents do not manage
   ClickHouse infrastructure.
+- ClickHouse connection credentials are provided via environment variables; a `.env.sample`
+  file documents the required variables (e.g., `CLICKHOUSE_HOST`, `CLICKHOUSE_PORT`,
+  `CLICKHOUSE_DATABASE`, `CLICKHOUSE_USER`, `CLICKHOUSE_PASSWORD`).
 - The operating environment has sufficient disk space for CSV exports; export file cleanup is
   out of scope.
 - The RAG query agent operates in a read-only mode against ClickHouse; it MUST NOT insert,
@@ -240,3 +271,5 @@ contains year and volume columns, and the provided SQL query is valid and reprod
   production statistics, pricing data).
 - A single ingestion run processes one source document at a time; batch ingestion of multiple
   documents is out of scope for v1.
+- Both agents are LangGraph graph objects; neither exposes a CLI command or HTTP endpoint
+  directly — invocation is handled entirely by the parent orchestrator.

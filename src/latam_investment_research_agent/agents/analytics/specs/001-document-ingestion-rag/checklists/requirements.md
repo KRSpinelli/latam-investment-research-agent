@@ -31,4 +31,4 @@
 
 ## Notes
 
-All items pass. The spec is ready for `/speckit-plan`.
+All items pass. 5 clarifications applied on 2026-05-23. The spec is ready for `/speckit-plan`.
