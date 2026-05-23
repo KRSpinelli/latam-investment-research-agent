@@ -9,6 +9,10 @@ authors = [
 ]
 dependencies = [
   "pydantic>=2.10.0",
+  "fastapi>=0.115.0",
+  "uvicorn[standard]>=0.32.0",
+  "httpx>=0.28.0",
+  "python-dotenv>=1.0.0",
 ]
 
 [project.optional-dependencies]
@@ -21,6 +25,7 @@ dev = [
 
 [project.scripts]
 latam_investment_research_agent = "latam_investment_research_agent.main:main"
+latam-api = "latam_investment_research_agent.main:run_api"
 
 
 [build-system]

@@ -13,8 +13,8 @@ from latam_investment_research_agent.agents.retrieval.schemas.routing import (
     RouteDecision,
 )
 from latam_investment_research_agent.agents.retrieval.schemas.senso import (
-    SensoChunk,
     SensoDocumentPayload,
+    SensoRawContent,
 )
 
 __all__ = [
@@ -24,6 +24,6 @@ __all__ = [
     "MarketSignal",
     "RetrievalOutcome",
     "RouteDecision",
-    "SensoChunk",
     "SensoDocumentPayload",
+    "SensoRawContent",
 ]

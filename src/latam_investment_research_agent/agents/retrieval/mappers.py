@@ -8,10 +8,9 @@ from latam_investment_research_agent.agents.retrieval.schemas.clickhouse import 
 )
 from latam_investment_research_agent.agents.retrieval.schemas.market_signal import MarketSignal
 from latam_investment_research_agent.agents.retrieval.schemas.senso import (
-    SensoChunk,
     SensoDocumentPayload,
+    SensoRawContent,
 )
-from latam_investment_research_agent.agents.retrieval.text_chunks import chunk_text
 
 
 def to_clickhouse_signal_row(signal: MarketSignal) -> ClickHouseSignalRow:
@@ -78,19 +77,21 @@ def to_clickhouse_metric_rows(signal: MarketSignal) -> list[ClickHouseMetricRow]
     return rows
 
 
+def _senso_raw_content(signal: MarketSignal) -> SensoRawContent:
+    body = signal.raw_content_body
+    if body is None:
+        body = signal.full_text or "\n\n".join(
+            [signal.summary, *signal.evidence_snippets]
+        ).strip()
+    content_type = signal.raw_content_type or "text/plain"
+    return SensoRawContent(
+        content_type=content_type,
+        encoding=signal.raw_content_encoding,
+        body=body,
+    )
+
+
 def to_senso_document(signal: MarketSignal) -> SensoDocumentPayload:
-    body = signal.full_text or "\n\n".join(
-        [signal.summary, *signal.evidence_snippets]
-    ).strip()
-    chunks = [
-        SensoChunk(
-            chunk_id=f"chk_{signal.document_id}_{i}",
-            document_id=signal.document_id,
-            text=text,
-            chunk_index=i,
-        )
-        for i, text in enumerate(chunk_text(body))
-    ]
     return SensoDocumentPayload(
         document_id=signal.document_id,
         signal_id=signal.signal_id,
@@ -110,7 +111,9 @@ def to_senso_document(signal: MarketSignal) -> SensoDocumentPayload:
         signal_type=signal.signal_type,
         summary=signal.summary,
         evidence_snippets=signal.evidence_snippets,
-        chunks=chunks,
+        raw_content=_senso_raw_content(signal),
+        nimble_task_id=signal.nimble_task_id,
+        nimble_metadata=dict(signal.nimble_metadata),
         relevance_score=signal.relevance_score,
         confidence=signal.confidence,
     )
