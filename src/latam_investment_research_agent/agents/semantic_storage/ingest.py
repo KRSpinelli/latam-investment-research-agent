@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Any
+from urllib.parse import urlparse
 
 from .client import SensoClient
 from .document_fetch import fetch_text_from_url
@@ -46,8 +47,33 @@ class FilingMetadata:
         return FILING_TYPES.get(self.filing_type, self.filing_type)
 
     def document_title(self) -> str:
+        """Build a Senso KB title unique per source URL when ``source_url`` is set."""
         subject = self.ticker if self.ticker else "Market research"
-        return f"{subject} — {self.filing_type_label} {self.period_label}"
+        base_title = f"{subject} — {self.filing_type_label} {self.period_label}"
+        if not self.source_url:
+            return base_title
+        return f"{base_title} — {_title_slug_from_url(self.source_url)}"
+
+
+def _title_slug_from_url(url: str, maximum_length: int = 72) -> str:
+    """Derive a short, human-readable slug from a URL for document titles.
+
+    Args:
+        url: Source document URL.
+        maximum_length: Maximum slug length before truncation.
+
+    Returns:
+        Slug such as ``example.com/my-article``.
+    """
+    parsed = urlparse(url)
+    host = parsed.netloc
+    if host.startswith("www."):
+        host = host[4:]
+    path_segment = parsed.path.rstrip("/").split("/")[-1]
+    slug = f"{host}/{path_segment}" if path_segment else host
+    if len(slug) > maximum_length:
+        return f"{slug[: maximum_length - 3]}..."
+    return slug
 
 
 def _resolve_folder_id(folder_map: FolderMap, ticker: str) -> str:

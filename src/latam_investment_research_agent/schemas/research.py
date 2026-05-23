@@ -1,5 +1,8 @@
 """Research pipeline request/response models (shared by API and services)."""
 
+from datetime import datetime
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 from latam_investment_research_agent.agents.analytics.models.domain import (
@@ -75,3 +78,29 @@ class ResearchWithIngestionResponse(BaseModel):
     senso_ingestion_results: list[SensoIngestionResultResponse] = Field(
         default_factory=list
     )
+
+
+ReportJobStatusLiteral = Literal["pending", "running", "completed", "failed"]
+
+
+class ReportJobCreateResponse(BaseModel):
+    """Response when a report generation job is accepted."""
+
+    job_id: str
+    status: ReportJobStatusLiteral
+    query: str
+
+
+class ReportJobStatusResponse(BaseModel):
+    """Pollable status for an analyst report job."""
+
+    job_id: str
+    status: ReportJobStatusLiteral
+    query: str
+    error: str | None = None
+    created_at: datetime
+    updated_at: datetime
+    completed_at: datetime | None = None
+    documents_ingested: int = 0
+    clickhouse_rows: int = 0
+    senso_chunks: int = 0

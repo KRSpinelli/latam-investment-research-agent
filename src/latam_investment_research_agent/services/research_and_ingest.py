@@ -82,7 +82,7 @@ async def run_research_and_ingest(
     Returns:
         Research results plus per-URL ClickHouse and Senso ingestion outcomes.
     """
-    research = pipeline.run(request)
+    research = await asyncio.to_thread(pipeline.run, request)
     source_references = source_references_from_documents(research.documents)
 
     ingestion_summaries: list[IngestionSummaryResponse] = []
