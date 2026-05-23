@@ -13,7 +13,12 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from latam_investment_research_agent.agents.analytics.models.domain import TableSchema
 from latam_investment_research_agent.agents.analytics.models.rag_state import RAGQueryState
+from latam_investment_research_agent.agents.analytics.services.sql_query_repair import (
+    extract_table_name,
+    repair_clickhouse_select,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -61,10 +66,16 @@ async def execute_queries_node(
     """
     sql_queries: list[str] = state.get("assembled_sql_queries", [])
     export_row_limit: int = state.get("export_row_limit", 10_000)
+    available_schemas: list[TableSchema] = state.get("available_table_schemas", [])
+    schemas_by_table = {schema.table_name.lower(): schema for schema in available_schemas}
 
     all_rows: list[dict[str, Any]] = []
 
     for sql_query in sql_queries:
+        table_name = extract_table_name(sql_query)
+        table_schema = schemas_by_table.get(table_name) if table_name else None
+        sql_query = repair_clickhouse_select(sql_query, table_schema)
+
         if not sql_query.strip().upper().startswith("SELECT"):
             logger.error(
                 "execute_queries_node: rejecting non-SELECT query (SELECT-only guard): %r",

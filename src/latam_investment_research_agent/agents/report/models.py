@@ -35,6 +35,49 @@ class ReportNarrative(BaseModel):
     )
 
 
+class ReportPdfLayoutHints(BaseModel):
+    """Layout adjustments applied when re-rendering the PDF after review."""
+
+    page_break_before_charts: bool = Field(
+        default=True,
+        description="Start charts on a new page.",
+    )
+    page_break_before_data_snapshot: bool = Field(
+        default=True,
+        description="Start the data table on a new page.",
+    )
+    page_break_before_appendix: bool = Field(
+        default=True,
+        description="Start limitations/methodology/SQL on a new page.",
+    )
+    chart_display_order: list[str] = Field(
+        default_factory=lambda: ["line", "bar", "pie"],
+        description="Order to display charts (line, bar, pie).",
+    )
+    max_sql_queries_in_appendix: int = Field(
+        default=8,
+        ge=1,
+        le=30,
+        description="Maximum SQL queries listed in the appendix.",
+    )
+
+
+class ReportFormattingReview(BaseModel):
+    """Output from the PDF formatting review agent."""
+
+    narrative: ReportNarrative = Field(
+        description="Copy-edited narrative with improved flow and consistency.",
+    )
+    layout_hints: ReportPdfLayoutHints = Field(
+        default_factory=ReportPdfLayoutHints,
+        description="Structural layout fixes for the final PDF render.",
+    )
+    formatting_changes_summary: str = Field(
+        default="",
+        description="Brief note on what was cleaned up (for logs).",
+    )
+
+
 @dataclass
 class ChartArtifact:
     """A matplotlib chart written to disk for PDF embedding."""
@@ -56,3 +99,4 @@ class ReportContext:
     senso_chunks: list[Chunk] = field(default_factory=list)
     narrative: ReportNarrative | None = None
     charts: list[ChartArtifact] = field(default_factory=list)
+    layout_hints: ReportPdfLayoutHints | None = None

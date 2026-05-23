@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+import logging
 import os
 from typing import Any
 
 import httpx
 
+logger = logging.getLogger(__name__)
+
 BASE_URL = "https://apiv2.senso.ai/api/v1"
 _TIMEOUT = 30.0
+_MAX_RAW_TEXT_CHARACTERS = 120_000
 
 
 class SensoClient:
@@ -92,45 +96,49 @@ class SensoClient:
     # KB — raw text content
     # ------------------------------------------------------------------
 
-    async def _find_child_by_title(
+    async def _find_raw_child_by_title(
         self,
         parent_id: str,
         title: str,
     ) -> dict[str, Any] | None:
-        """Return a child KB node with the given display name, if present.
+        """Return an existing raw content node with the given title, if present.
 
         Args:
             parent_id: Folder to search.
             title: Expected node name / title.
 
         Returns:
-            Matching node dict or ``None``.
+            Matching content node dict or ``None``.
         """
         for node in await self.kb_children(parent_id, node_type=None):
+            if node.get("type") == "folder":
+                continue
             if node.get("name") == title or node.get("title") == title:
                 return node
         return None
 
-    async def _reuse_or_update_raw(
+    async def _reuse_existing_raw(
         self,
         folder_id: str,
         title: str,
-        text: str,
     ) -> dict[str, Any]:
-        """On duplicate ingest (HTTP 409), update existing raw content in place.
+        """On duplicate ingest (HTTP 409), return the existing KB node identifiers.
+
+        Senso's raw update endpoint often rejects in-place updates (HTTP 400) while
+        the document is processing or for policy reasons. Reusing the existing node
+        is sufficient for search and report generation.
 
         Args:
             folder_id: Target folder node ID.
             title: Document title used for create.
-            text: Full document text.
 
         Returns:
             Response shaped like :meth:`kb_create_raw`.
 
         Raises:
-            httpx.HTTPStatusError: If no matching node exists to update.
+            httpx.HTTPStatusError: If no matching content node exists.
         """
-        existing = await self._find_child_by_title(folder_id, title)
+        existing = await self._find_raw_child_by_title(folder_id, title)
         if existing is None:
             raise httpx.HTTPStatusError(
                 "Senso returned 409 Conflict but no existing node matched the title",
@@ -144,12 +152,15 @@ class SensoClient:
                 request=httpx.Request("POST", f"{self._base}/org/kb/raw"),
                 response=httpx.Response(409),
             )
-        updated = await self.kb_update_raw(node_id, text)
-        content = updated.get("content", updated)
+        processing_status = None
+        content = existing.get("content")
         if isinstance(content, dict):
             processing_status = content.get("processing_status")
-        else:
-            processing_status = None
+        logger.info(
+            "Reusing existing Senso KB node %s for title %r (409 duplicate)",
+            node_id,
+            title,
+        )
         return {
             "kb_node_id": node_id,
             "content_id": node_id,
@@ -166,9 +177,18 @@ class SensoClient:
     ) -> dict[str, Any]:
         """Ingest raw text into a KB folder. Senso handles chunking and embedding.
 
-        If Senso reports a duplicate (HTTP 409), updates the existing node text
-        and returns its identifiers instead of failing.
+        If Senso reports a duplicate (HTTP 409), returns the existing node's
+        identifiers instead of failing.
         """
+        if len(text) > _MAX_RAW_TEXT_CHARACTERS:
+            logger.warning(
+                "Truncating Senso raw text from %d to %d characters for %r",
+                len(text),
+                _MAX_RAW_TEXT_CHARACTERS,
+                title,
+            )
+            text = text[:_MAX_RAW_TEXT_CHARACTERS]
+
         body: dict[str, Any] = {
             "title": title,
             "text": text,
@@ -176,12 +196,16 @@ class SensoClient:
         }
         if tag_ids:
             body["tag_ids"] = tag_ids
+
         try:
             return dict(await self._post("/org/kb/raw", body))
         except httpx.HTTPStatusError as error:
-            if error.response.status_code != 409:
+            if error.response.status_code not in {400, 409}:
                 raise
-            return await self._reuse_or_update_raw(folder_id, title, text)
+            try:
+                return await self._reuse_existing_raw(folder_id, title)
+            except httpx.HTTPStatusError:
+                raise error from None
 
     async def kb_update_raw(self, node_id: str, text: str) -> dict[str, Any]:
         """Replace the full text of an existing raw content node."""

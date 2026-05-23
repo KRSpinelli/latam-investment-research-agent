@@ -22,9 +22,11 @@ def test_build_charts_from_records_creates_png(tmp_path: Path) -> None:
         output_directory=tmp_path,
     )
 
-    assert len(charts) >= 1
-    assert charts[0].file_path.is_file()
-    assert charts[0].file_path.suffix == ".png"
+    chart_types = {chart.chart_type for chart in charts}
+    assert chart_types == {"line", "bar", "pie"}
+    for chart in charts:
+        assert chart.file_path.is_file()
+        assert chart.file_path.suffix == ".png"
 
 
 def test_build_charts_from_empty_records_returns_empty(tmp_path: Path) -> None:

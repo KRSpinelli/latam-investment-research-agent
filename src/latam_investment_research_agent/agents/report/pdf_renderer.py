@@ -10,9 +10,13 @@ from reportlab.lib import colors
 from reportlab.lib.pagesizes import letter
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import inch
-from reportlab.platypus import Image, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+from reportlab.platypus import Image, PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
-from latam_investment_research_agent.agents.report.models import ReportContext, ReportNarrative
+from latam_investment_research_agent.agents.report.models import (
+    ReportContext,
+    ReportNarrative,
+    ReportPdfLayoutHints,
+)
 
 
 def _styles() -> dict[str, ParagraphStyle]:
@@ -121,6 +125,30 @@ def _records_table(records: list[dict[str, Any]], max_rows: int = 12) -> Table |
     return table
 
 
+def _ordered_charts(context: ReportContext, layout_hints: ReportPdfLayoutHints) -> list:
+    """Return charts sorted for display (line, bar, pie by default).
+
+    Args:
+        context: Report context with chart artifacts.
+        layout_hints: Layout preferences from the review agent.
+
+    Returns:
+        Ordered list of ChartArtifact instances.
+    """
+    if not context.charts:
+        return []
+
+    order = layout_hints.chart_display_order
+
+    def sort_key(chart: object) -> int:
+        chart_type = getattr(chart, "chart_type", "")
+        if chart_type in order:
+            return order.index(chart_type)
+        return len(order)
+
+    return sorted(context.charts, key=sort_key)
+
+
 def render_report_pdf(context: ReportContext) -> bytes:
     """Render the full analyst report as PDF bytes.
 
@@ -137,6 +165,7 @@ def render_report_pdf(context: ReportContext) -> bytes:
         limitations="",
         methodology="",
     )
+    layout_hints = context.layout_hints or ReportPdfLayoutHints()
     style_map = _styles()
     buffer = io.BytesIO()
     document = SimpleDocTemplate(
@@ -167,20 +196,27 @@ def render_report_pdf(context: ReportContext) -> bytes:
     story.append(_paragraph("Quantitative Analysis", style_map["heading"]))
     story.append(_paragraph(narrative.quantitative_analysis, style_map["body"]))
 
-    if context.charts:
+    ordered_charts = _ordered_charts(context, layout_hints)
+    if ordered_charts:
+        if layout_hints.page_break_before_charts:
+            story.append(PageBreak())
         story.append(_paragraph("Charts", style_map["heading"]))
-        for chart in context.charts:
+        for chart in ordered_charts:
             story.append(_paragraph(chart.title, style_map["body"]))
             image = Image(str(chart.file_path), width=6.5 * inch, height=3.6 * inch)
             story.append(image)
             story.append(Spacer(1, 0.15 * inch))
 
+    if layout_hints.page_break_before_data_snapshot:
+        story.append(PageBreak())
     story.append(_paragraph("Data Snapshot", style_map["heading"]))
     story.append(_records_table(context.query_result_records))
 
     story.append(_paragraph("Qualitative Context", style_map["heading"]))
     story.append(_paragraph(narrative.qualitative_analysis, style_map["body"]))
 
+    if layout_hints.page_break_before_appendix:
+        story.append(PageBreak())
     story.append(_paragraph("Limitations", style_map["heading"]))
     story.append(_paragraph(narrative.limitations, style_map["body"]))
 
@@ -188,7 +224,7 @@ def render_report_pdf(context: ReportContext) -> bytes:
     story.append(_paragraph(narrative.methodology, style_map["body"]))
 
     rag = context.rag_output
-    sql_lines = rag.get("sql_queries_used", [])
+    sql_lines = list(rag.get("sql_queries_used", []))[: layout_hints.max_sql_queries_in_appendix]
     if sql_lines:
         story.append(_paragraph("SQL queries executed:", style_map["body"]))
         for sql in sql_lines:

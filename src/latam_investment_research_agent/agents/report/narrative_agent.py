@@ -15,7 +15,15 @@ logger = logging.getLogger(__name__)
 
 _SYSTEM_PROMPT = """You are a senior LatAm investment research analyst writing an institutional
 research report. Use only the evidence provided. Be precise, neutral, and concise.
-Highlight Brazil / Latin America context when relevant."""
+Highlight Brazil / Latin America context when relevant.
+
+Quantitative rules:
+- If sample quantitative rows are provided (row count > 0), you MUST cite specific
+  numbers from those rows in quantitative_analysis and key_findings.
+- Never write that "no quantitative data" or "row count = 0" when rows are present.
+- When rows describe market aggregates rather than named companies, frame them as
+  market context and macro backdrop, then connect qualitatively to the research question.
+- Always produce a coherent story from the evidence available."""
 
 
 def _format_rows_sample(records: list[dict[str, Any]], limit: int = 15) -> str:
@@ -29,9 +37,16 @@ def _format_rows_sample(records: list[dict[str, Any]], limit: int = 15) -> str:
         JSON string or a no-data message.
     """
     if not records:
-        return "No quantitative rows returned from ClickHouse."
+        return (
+            "No ClickHouse rows were available after all fallback strategies. "
+            "Rely on Senso excerpts and research signals only."
+        )
     sample = records[:limit]
-    return json.dumps(sample, indent=2, default=str)
+    table_names = sorted({str(row.get("_snapshot_table", "")) for row in sample if row.get("_snapshot_table")})
+    header = f"{len(records)} total row(s)"
+    if table_names:
+        header += f" from table(s): {', '.join(table_names)}"
+    return f"{header}\n{json.dumps(sample, indent=2, default=str)}"
 
 
 def _format_senso_chunks(context: ReportContext) -> str:
@@ -102,6 +117,9 @@ SQL executed:
 
 Row count: {rag.get("row_count", 0)}
 Truncated: {rag.get("was_truncated", False)}
+
+IMPORTANT: The row count above is authoritative. If row count > 0, you must analyze
+the sample rows below with specific numbers — do not claim quantitative data is missing.
 
 Sample quantitative rows:
 {_format_rows_sample(context.query_result_records)}

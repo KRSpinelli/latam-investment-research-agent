@@ -11,8 +11,8 @@ from latam_investment_research_agent.agents.semantic_storage.client import Senso
 
 
 @pytest.mark.asyncio
-async def test_kb_create_raw_updates_on_409_conflict() -> None:
-    """HTTP 409 should refresh existing raw content instead of failing."""
+async def test_kb_create_raw_reuses_existing_on_409_conflict() -> None:
+    """HTTP 409 should return the existing node without calling the update API."""
     client = SensoClient(api_key="test-key")
     conflict_response = httpx.Response(
         status_code=409,
@@ -32,15 +32,18 @@ async def test_kb_create_raw_updates_on_409_conflict() -> None:
         ),
         patch.object(
             client,
-            "_find_child_by_title",
+            "_find_raw_child_by_title",
             new_callable=AsyncMock,
-            return_value={"kb_node_id": "node_existing", "name": "My Doc"},
+            return_value={
+                "kb_node_id": "node_existing",
+                "name": "My Doc",
+                "content": {"processing_status": "ready"},
+            },
         ),
         patch.object(
             client,
             "kb_update_raw",
             new_callable=AsyncMock,
-            return_value={"content": {"processing_status": "processing"}},
         ) as update_mock,
     ):
         result = await client.kb_create_raw(
@@ -49,6 +52,6 @@ async def test_kb_create_raw_updates_on_409_conflict() -> None:
             folder_id="folder_1",
         )
 
-    update_mock.assert_awaited_once_with("node_existing", "updated body")
+    update_mock.assert_not_called()
     assert result["kb_node_id"] == "node_existing"
     assert result["reused_existing"] is True

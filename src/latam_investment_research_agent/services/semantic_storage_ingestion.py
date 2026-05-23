@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from datetime import UTC, datetime
 from urllib.parse import urlparse
+
+import httpx
 
 from latam_investment_research_agent.agents.retrieval.schemas.market_signal import (
     MarketSignal,
@@ -26,6 +29,11 @@ from latam_investment_research_agent.schemas.research import (
 )
 
 logger = logging.getLogger(__name__)
+
+_SENSO_NODE_ID_IN_ERROR = re.compile(
+    r"/org/kb/nodes/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/raw",
+    re.IGNORECASE,
+)
 
 _HOST_LABEL_TO_TICKER: dict[str, str] = {
     "cooxupe": "COOXUPE",
@@ -149,6 +157,26 @@ async def ingest_source_to_senso(
             processing_status=content.get("processing_status"),
         )
     except Exception as exc:
+        error_text = str(exc)
+        if isinstance(exc, httpx.HTTPStatusError):
+            error_text = f"{exc.request.url} {error_text}"
+        node_match = _SENSO_NODE_ID_IN_ERROR.search(error_text)
+        if node_match is not None:
+            node_id = node_match.group(1)
+            logger.info(
+                "Senso document already exists for %s; reusing node %s",
+                source_reference,
+                node_id,
+            )
+            return SensoIngestionResultResponse(
+                source_reference=source_reference,
+                ticker=metadata.ticker,
+                filing_type=metadata.filing_type,
+                fiscal_year=metadata.fiscal_year,
+                title=title,
+                kb_node_id=node_id,
+                processing_status="reused_existing",
+            )
         logger.warning("Senso ingestion failed for %s: %s", source_reference, exc)
         return SensoIngestionResultResponse(
             source_reference=source_reference,

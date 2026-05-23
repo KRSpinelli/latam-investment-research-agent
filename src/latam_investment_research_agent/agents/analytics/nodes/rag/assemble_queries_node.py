@@ -15,8 +15,16 @@ from typing import Any
 from langchain_core.language_models import BaseChatModel
 
 from latam_investment_research_agent.agents.analytics.models.rag_state import RAGQueryState
+from latam_investment_research_agent.agents.analytics.services.exploratory_queries import (
+    build_exploratory_queries,
+)
 from latam_investment_research_agent.agents.analytics.services.query_assembler import (
+    _MAX_TOTAL_QUERIES,
     assemble_queries,
+)
+from latam_investment_research_agent.agents.analytics.services.sql_query_repair import (
+    extract_table_name,
+    repair_clickhouse_select,
 )
 
 logger = logging.getLogger(__name__)
@@ -58,11 +66,39 @@ async def assemble_queries_node(
         len(selected_schemas),
     )
 
-    queries = await assemble_queries(
+    language_model_queries = await assemble_queries(
         question=question,
         selected_schemas=selected_schemas,
         llm=llm,
         export_row_limit=export_row_limit,
     )
+    template_queries = build_exploratory_queries(
+        selected_schemas,
+        row_limit=min(export_row_limit, 10_000),
+        max_queries_per_table=4,
+    )
 
-    return {"assembled_sql_queries": queries}
+    schemas_by_table = {schema.table_name.lower(): schema for schema in selected_schemas}
+    merged_queries: list[str] = []
+    seen_queries: set[str] = set()
+    for sql_query in [*language_model_queries, *template_queries]:
+        table_name = extract_table_name(sql_query)
+        table_schema = schemas_by_table.get(table_name) if table_name else None
+        normalized = repair_clickhouse_select(
+            sql_query.strip().rstrip(";"),
+            table_schema,
+        )
+        if normalized and normalized not in seen_queries:
+            seen_queries.add(normalized)
+            merged_queries.append(normalized)
+        if len(merged_queries) >= _MAX_TOTAL_QUERIES:
+            break
+
+    logger.info(
+        "Assembled %d total queries (%d from LLM, %d template).",
+        len(merged_queries),
+        len(language_model_queries),
+        len(template_queries),
+    )
+
+    return {"assembled_sql_queries": merged_queries}

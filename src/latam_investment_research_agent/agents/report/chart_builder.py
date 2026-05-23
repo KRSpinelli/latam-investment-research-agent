@@ -1,4 +1,4 @@
-"""Build matplotlib charts from ClickHouse RAG query rows."""
+"""Build matplotlib charts from ClickHouse query rows."""
 
 from __future__ import annotations
 
@@ -17,8 +17,10 @@ from latam_investment_research_agent.agents.report.models import ChartArtifact
 
 logger = logging.getLogger(__name__)
 
-_MAX_CHARTS = 2
-_YEAR_COLUMN_PATTERN = re.compile(r"year|period|date|fiscal|ano|safra", re.IGNORECASE)
+_YEAR_COLUMN_PATTERN = re.compile(r"year|period|date|fiscal|ano|safra|month|quarter", re.IGNORECASE)
+_PIE_SLICE_LIMIT = 8
+_PLOT_POINT_LIMIT = 24
+_REQUIRED_CHART_TYPES = ("line", "bar", "pie")
 
 
 def _is_numeric_column(series: pl.Series) -> bool:
@@ -46,7 +48,7 @@ def _is_numeric_column(series: pl.Series) -> bool:
 
 
 def _pick_category_column(frame: pl.DataFrame) -> str | None:
-    """Pick a label column for chart x-axis.
+    """Pick a label column for chart axes.
 
     Args:
         frame: Query result data.
@@ -58,7 +60,12 @@ def _pick_category_column(frame: pl.DataFrame) -> str | None:
         if _YEAR_COLUMN_PATTERN.search(column_name):
             return column_name
     for column_name in frame.columns:
-        if column_name in {"source_reference", "content_hash", "ingestion_timestamp"}:
+        if column_name in {
+            "source_reference",
+            "content_hash",
+            "ingestion_timestamp",
+            "_snapshot_table",
+        }:
             continue
         if not _is_numeric_column(frame[column_name]):
             return column_name
@@ -78,9 +85,66 @@ def _pick_value_column(frame: pl.DataFrame, category_column: str | None) -> str 
     for column_name in frame.columns:
         if column_name == category_column:
             continue
+        if column_name in {"content_hash", "ingestion_timestamp", "_snapshot_table"}:
+            continue
         if _is_numeric_column(frame[column_name]):
             return column_name
     return None
+
+
+def _prepare_plot_series(
+    categories: list[str],
+    values: list[float],
+    *,
+    limit: int = _PLOT_POINT_LIMIT,
+) -> tuple[list[str], list[float]]:
+    """Trim and sort plot data for readability.
+
+    Args:
+        categories: Category labels.
+        values: Numeric values aligned with categories.
+        limit: Maximum points to plot.
+
+    Returns:
+        Trimmed categories and values sorted by value descending.
+    """
+    pairs = [
+        (label, value)
+        for label, value in zip(categories, values, strict=True)
+        if value is not None
+    ]
+    pairs = [(label, float(value)) for label, value in pairs if value == value]
+    pairs.sort(key=lambda item: item[1], reverse=True)
+    pairs = pairs[:limit]
+    if not pairs:
+        return [], []
+    return [label for label, _ in pairs], [value for _, value in pairs]
+
+
+def _prepare_pie_series(
+    categories: list[str],
+    values: list[float],
+) -> tuple[list[str], list[float]]:
+    """Collapse long tails into an "Other" slice for pie charts.
+
+    Args:
+        categories: Category labels.
+        values: Numeric values.
+
+    Returns:
+        At most ``_PIE_SLICE_LIMIT`` slices plus optional "Other".
+    """
+    trimmed_categories, trimmed_values = _prepare_plot_series(categories, values)
+    if len(trimmed_categories) <= _PIE_SLICE_LIMIT:
+        return trimmed_categories, trimmed_values
+
+    top_categories = trimmed_categories[: _PIE_SLICE_LIMIT - 1]
+    top_values = trimmed_values[: _PIE_SLICE_LIMIT - 1]
+    other_total = sum(trimmed_values[_PIE_SLICE_LIMIT - 1 :])
+    if other_total > 0:
+        top_categories.append("Other")
+        top_values.append(other_total)
+    return top_categories, top_values
 
 
 def _save_chart(
@@ -96,9 +160,9 @@ def _save_chart(
     Args:
         output_path: Destination PNG path.
         title: Chart title.
-        categories: X-axis labels.
-        values: Y-axis values.
-        chart_type: ``line`` or ``bar``.
+        categories: Category labels.
+        values: Numeric values.
+        chart_type: ``line``, ``bar``, or ``pie``.
     """
     figure, axis = plt.subplots(figsize=(8, 4.5))
     try:
@@ -106,12 +170,23 @@ def _save_chart(
             axis.plot(range(len(values)), values, marker="o", linewidth=2, color="#1f4e79")
             axis.set_xticks(range(len(categories)))
             axis.set_xticklabels(categories, rotation=45, ha="right")
-        else:
+            axis.set_ylabel("Value")
+            axis.grid(True, linestyle="--", alpha=0.35)
+        elif chart_type == "bar":
             axis.bar(categories, values, color="#2e6da4")
             axis.tick_params(axis="x", rotation=45)
+            axis.set_ylabel("Value")
+            axis.grid(True, linestyle="--", alpha=0.35, axis="y")
+        elif chart_type == "pie":
+            axis.pie(
+                values,
+                labels=categories,
+                autopct="%1.1f%%",
+                startangle=90,
+                textprops={"fontsize": 8},
+            )
+            axis.axis("equal")
         axis.set_title(title, fontsize=12, fontweight="bold")
-        axis.grid(True, linestyle="--", alpha=0.35)
-        axis.set_ylabel("Value")
         figure.tight_layout()
         figure.savefig(output_path, dpi=150, bbox_inches="tight")
     finally:
@@ -124,15 +199,18 @@ def build_charts_from_records(
     query: str,
     output_directory: Path,
 ) -> list[ChartArtifact]:
-    """Build up to two charts from RAG query result rows.
+    """Build line, bar, and pie charts from query result rows.
+
+    Every non-empty result set produces all three chart types when a numeric
+    measure and category axis can be derived.
 
     Args:
-        records: Rows returned by the ClickHouse RAG graph.
+        records: Rows returned from ClickHouse queries.
         query: Original research question (used in chart titles).
         output_directory: Directory where PNG files are written.
 
     Returns:
-        Chart metadata for PDF embedding.
+        Chart metadata for PDF embedding (line, bar, pie when possible).
     """
     if not records:
         return []
@@ -151,7 +229,7 @@ def build_charts_from_records(
         category_column = "index"
         frame = frame.with_row_index(name=category_column)
 
-    plot_frame = frame.select([category_column, value_column]).drop_nulls().head(24)
+    plot_frame = frame.select([category_column, value_column]).drop_nulls()
     if plot_frame.is_empty():
         return []
 
@@ -159,65 +237,47 @@ def build_charts_from_records(
     numeric_values = plot_frame[value_column].cast(pl.Float64, strict=False).to_list()
     values = [float(value) if value is not None else 0.0 for value in numeric_values]
 
-    chart_type = "line" if _YEAR_COLUMN_PATTERN.search(category_column) else "bar"
+    line_categories, line_values = _prepare_plot_series(categories, values)
+    bar_categories, bar_values = _prepare_plot_series(categories, values)
+    pie_categories, pie_values = _prepare_pie_series(categories, values)
+
+    if not line_values:
+        return []
+
     title_suffix = query[:60] + ("…" if len(query) > 60 else "")
-    chart_title = f"{value_column.replace('_', ' ').title()} — {title_suffix}"
-
+    value_label = value_column.replace("_", " ").title()
     output_directory.mkdir(parents=True, exist_ok=True)
-    chart_path = output_directory / f"chart_{value_column}.png"
-    _save_chart(
-        output_path=chart_path,
-        title=chart_title,
-        categories=categories,
-        values=values,
-        chart_type=chart_type,
-    )
 
-    artifacts = [
-        ChartArtifact(
+    artifacts: list[ChartArtifact] = []
+    chart_series: list[tuple[str, list[str], list[float]]] = [
+        ("line", line_categories, line_values),
+        ("bar", bar_categories, bar_values),
+        ("pie", pie_categories, pie_values),
+    ]
+
+    for chart_type, chart_categories, chart_values in chart_series:
+        if not chart_values:
+            continue
+        chart_title = f"{value_label} ({chart_type}) — {title_suffix}"
+        chart_path = output_directory / f"chart_{value_column}_{chart_type}.png"
+        _save_chart(
+            output_path=chart_path,
             title=chart_title,
-            file_path=chart_path,
+            categories=chart_categories,
+            values=chart_values,
             chart_type=chart_type,
         )
-    ]
-
-    if len(frame.columns) < 3 or _MAX_CHARTS < 2:
-        return artifacts
-
-    remaining_numeric = [
-        column_name
-        for column_name in frame.columns
-        if column_name not in {category_column, value_column}
-        and _is_numeric_column(frame[column_name])
-    ]
-    if not remaining_numeric:
-        return artifacts
-
-    second_value_column = remaining_numeric[0]
-    second_frame = frame.select([category_column, second_value_column]).drop_nulls().head(24)
-    if second_frame.is_empty():
-        return artifacts
-
-    second_categories = [str(value) for value in second_frame[category_column].to_list()]
-    second_numeric = second_frame[second_value_column].cast(pl.Float64, strict=False).to_list()
-    second_values = [float(value) if value is not None else 0.0 for value in second_numeric]
-    second_chart_type = (
-        "line" if _YEAR_COLUMN_PATTERN.search(category_column) else "bar"
-    )
-    second_title = f"{second_value_column.replace('_', ' ').title()} — {title_suffix}"
-    second_path = output_directory / f"chart_{second_value_column}.png"
-    _save_chart(
-        output_path=second_path,
-        title=second_title,
-        categories=second_categories,
-        values=second_values,
-        chart_type=second_chart_type,
-    )
-    artifacts.append(
-        ChartArtifact(
-            title=second_title,
-            file_path=second_path,
-            chart_type=second_chart_type,
+        artifacts.append(
+            ChartArtifact(
+                title=chart_title,
+                file_path=chart_path,
+                chart_type=chart_type,
+            )
         )
+
+    logger.info(
+        "Built %d chart(s): %s",
+        len(artifacts),
+        ", ".join(artifact.chart_type for artifact in artifacts),
     )
     return artifacts

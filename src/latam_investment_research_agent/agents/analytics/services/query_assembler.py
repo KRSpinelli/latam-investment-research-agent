@@ -18,14 +18,25 @@ from pydantic import BaseModel
 
 from latam_investment_research_agent.agents.analytics.constants import MANDATORY_AUDIT_COLUMNS
 from latam_investment_research_agent.agents.analytics.models.domain import TableSchema
+from latam_investment_research_agent.agents.analytics.services.sql_query_repair import (
+    repair_clickhouse_select,
+)
 
 logger = logging.getLogger(__name__)
 
 _SOURCE_REFERENCE_COLUMN = MANDATORY_AUDIT_COLUMNS[0]
 
+_MINIMUM_LLM_QUERIES = 12
+_MAX_TOTAL_QUERIES = 30
+
 _SYSTEM_PROMPT = f"""\
 You are a ClickHouse SQL expert.  The user has a financial data question and you
 must answer it by generating ClickHouse-compatible SELECT statements.
+
+Query budget: the caller has generous ClickHouse capacity — generate many queries.
+Produce at least {_MINIMUM_LLM_QUERIES} distinct SELECT statements when schemas allow.
+Explore every relevant table from multiple angles (raw rows, time trends, totals,
+breakdowns by categorical columns). Prefer breadth and variety over a single minimal query.
 
 Rules:
 - Return ONLY SELECT statements.  Never return INSERT, UPDATE, DELETE, DROP, or
@@ -33,10 +44,16 @@ Rules:
 - Each query must include a LIMIT clause using the row limit provided.
 - Use exact table and column names from the schemas provided.
 - Every query MUST expose the document URL column ``{_SOURCE_REFERENCE_COLUMN}``:
-  include it in the SELECT list for row-level queries, or use
-  ``any({_SOURCE_REFERENCE_COLUMN}) AS {_SOURCE_REFERENCE_COLUMN}`` when using
-  GROUP BY / aggregates.
+  include it as a plain column for row-level queries. For GROUP BY queries, use
+  ``any({_SOURCE_REFERENCE_COLUMN}) AS {_SOURCE_REFERENCE_COLUMN}`` and list every
+  non-aggregated SELECT column in GROUP BY.
 - Prefer simple queries; join only when necessary.
+- When using aggregate functions (SUM, COUNT, any, etc.), every non-aggregated
+  column in the SELECT list MUST appear in GROUP BY (ClickHouse strict mode).
+- Use ONLY column names that appear in the provided schemas. Never invent columns
+  (for example ``producer``, ``location``, ``prize_amount``, ``country``).
+- Prefer simple ``SELECT ... FROM table ORDER BY ... LIMIT`` without WHERE unless
+  the filter column is explicitly listed in the schema.
 - Do not explain the queries — return only the SQL text.
 """
 
@@ -69,6 +86,32 @@ def _format_schemas_for_prompt(schemas: list[TableSchema]) -> str:
     return "\n".join(lines)
 
 
+def _schema_for_query(
+    sql_query: str,
+    selected_schemas: list[TableSchema],
+) -> TableSchema | None:
+    """Resolve the table schema used by a SELECT query.
+
+    Args:
+        sql_query: SQL query string.
+        selected_schemas: Schemas available to the assembler.
+
+    Returns:
+        Matching TableSchema or None.
+    """
+    from latam_investment_research_agent.agents.analytics.services.sql_query_repair import (
+        extract_table_name,
+    )
+
+    table_name = extract_table_name(sql_query)
+    if table_name is None:
+        return None
+    for schema in selected_schemas:
+        if schema.table_name.lower() == table_name:
+            return schema
+    return None
+
+
 def _is_select_query(query: str) -> bool:
     """Return True if the query string begins with SELECT (case-insensitive).
 
@@ -95,7 +138,7 @@ def ensure_source_reference_in_select(sql_query: str) -> str:
     """
     stripped_query = sql_query.strip().rstrip(";")
     if _SOURCE_REFERENCE_COLUMN in stripped_query.lower():
-        return stripped_query
+        return repair_clickhouse_select(stripped_query)
 
     from_match = re.search(r"\s+from\s+", stripped_query, flags=re.IGNORECASE)
     if from_match is None:
@@ -118,8 +161,7 @@ def ensure_source_reference_in_select(sql_query: str) -> str:
         )
     else:
         rewritten_select = f"SELECT {_SOURCE_REFERENCE_COLUMN}, {select_list}"
-
-    return f"{rewritten_select}{remainder}"
+    return repair_clickhouse_select(f"{rewritten_select}{remainder}")
 
 
 async def assemble_queries(
@@ -152,8 +194,11 @@ async def assemble_queries(
     schema_text = _format_schemas_for_prompt(selected_schemas)
     user_message = (
         f"Available tables:\n{schema_text}\n\n"
-        f"Row limit per query: {export_row_limit}\n\n"
-        f"Question: {question}"
+        f"Row limit per query: {export_row_limit}\n"
+        f"Minimum queries to return: {_MINIMUM_LLM_QUERIES}\n\n"
+        f"Question: {question}\n\n"
+        "Generate diverse queries — totals, rankings, time series, and segment breakdowns. "
+        "Use the full query budget; more exploration is better."
     )
 
     structured_llm = llm.with_structured_output(_QueryListResponse)
@@ -167,7 +212,10 @@ async def assemble_queries(
     validated_queries: list[str] = []
     for query in response.sql_queries:
         if _is_select_query(query):
-            validated_queries.append(ensure_source_reference_in_select(query))
+            rewritten = ensure_source_reference_in_select(query)
+            validated_queries.append(
+                repair_clickhouse_select(rewritten, _schema_for_query(rewritten, selected_schemas))
+            )
         else:
             logger.warning(
                 "LLM returned a non-SELECT query — discarding: %r",

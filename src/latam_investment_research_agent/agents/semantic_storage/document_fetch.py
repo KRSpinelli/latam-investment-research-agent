@@ -19,7 +19,7 @@ from latam_investment_research_agent.agents.analytics.services.document_fetcher 
     _is_pdf_content_type,
 )
 from latam_investment_research_agent.agents.analytics.services.http_fetch_client import (
-    build_document_fetch_client,
+    fetch_http_document,
 )
 
 logger = logging.getLogger(__name__)
@@ -79,24 +79,22 @@ async def fetch_text_from_url(url: str) -> str:
         raise ValueError(f"URL must be http or https, got: {url!r}")
 
     logger.info("Fetching document for Senso: %s", url)
-    async with build_document_fetch_client() as http_client:
-        try:
-            response = await http_client.get(url)
-            response.raise_for_status()
-        except httpx.HTTPStatusError as exc:
-            raise DocumentFetchError(
-                url,
-                f"HTTP {exc.response.status_code} response",
-            ) from exc
-        except httpx.RequestError as exc:
-            raise DocumentFetchError(url, f"Network error: {exc}") from exc
+    try:
+        response = await fetch_http_document(url)
+    except httpx.HTTPStatusError as exc:
+        raise DocumentFetchError(
+            url,
+            f"HTTP {exc.response.status_code} response",
+        ) from exc
+    except httpx.RequestError as exc:
+        raise DocumentFetchError(url, f"Network error: {exc}") from exc
 
-        content_type = response.headers.get("content-type", "")
-        url_lower = url.lower()
+    content_type = response.headers.get("content-type", "")
+    url_lower = url.lower()
 
-        if _is_pdf_content_type(content_type) or url_lower.endswith(".pdf"):
-            logger.info("Detected PDF — extracting all pages")
-            return _extract_text_from_pdf_bytes(response.content, url)
+    if _is_pdf_content_type(content_type) or url_lower.endswith(".pdf"):
+        logger.info("Detected PDF — extracting all pages")
+        return _extract_text_from_pdf_bytes(response.content, url)
 
-        logger.info("Detected HTML — extracting full page text")
-        return _extract_full_page_text_from_html_bytes(response.content)
+    logger.info("Detected HTML — extracting full page text")
+    return _extract_full_page_text_from_html_bytes(response.content)

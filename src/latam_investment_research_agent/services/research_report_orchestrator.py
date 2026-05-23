@@ -25,8 +25,14 @@ from latam_investment_research_agent.agents.report.narrative_agent import (
     generate_report_narrative,
 )
 from latam_investment_research_agent.agents.report.pdf_renderer import render_report_pdf
+from latam_investment_research_agent.agents.report.pdf_review_agent import (
+    review_report_formatting,
+)
 from latam_investment_research_agent.agents.semantic_storage.search import search_memory
 from latam_investment_research_agent.schemas.research import ResearchRequest
+from latam_investment_research_agent.services.report_quantitative_fallback import (
+    ensure_quantitative_data,
+)
 from latam_investment_research_agent.services.research_and_ingest import run_research_and_ingest
 from latam_investment_research_agent.services.research_pipeline import ResearchPipeline
 
@@ -72,15 +78,40 @@ async def run_report_pipeline(
             config=analytics_config,
             clickhouse_client=clickhouse_client,
         )
+        rag_question = (
+            f"{request.query}\n\n"
+            "ClickHouse query budget: unlimited — run many diverse SELECT queries across "
+            "all relevant tables (trends, totals, rankings, segment breakdowns).\n"
+            "Use only columns that exist in the selected ClickHouse table schemas. "
+            "Prefer broad SELECT queries without geographic or price filters unless "
+            "those columns are explicitly present."
+        )
         rag_state = await rag_graph.ainvoke(
             {
-                "natural_language_question": request.query,
+                "natural_language_question": rag_question,
                 "export_row_limit": 10_000,
                 "export_directory": str(job_directory),
             }
         )
-        rag_output = rag_state.get("rag_query_output", _EMPTY_RAG_OUTPUT)
+        rag_output = dict(rag_state.get("rag_query_output", _EMPTY_RAG_OUTPUT))
         query_result_records = list(rag_state.get("query_result_records", []))
+
+        logger.info("Report pipeline: ensuring minimum ClickHouse quantitative rows")
+        quantitative_bundle = await ensure_quantitative_data(
+            request.query,
+            ingestion.ingestion_summaries,
+            clickhouse_client,
+            existing_rows=query_result_records,
+            existing_sql_queries=list(rag_output.get("sql_queries_used", [])),
+        )
+        query_result_records = quantitative_bundle.rows
+        rag_output["row_count"] = len(query_result_records)
+        rag_output["sql_queries_used"] = quantitative_bundle.sql_queries
+        if quantitative_bundle.data_source_note:
+            rag_output["rationale"] = (
+                f"{rag_output.get('rationale', '')} "
+                f"{quantitative_bundle.data_source_note}"
+            ).strip()
 
     senso_content_ids = [
         result.kb_node_id
@@ -94,6 +125,9 @@ async def run_report_pipeline(
             max_results=12,
             content_ids=senso_content_ids or None,
         )
+        if not senso_chunks and senso_content_ids:
+            logger.info("Scoped Senso search returned no chunks; retrying org-wide")
+            senso_chunks = await search_memory(request.query, max_results=12)
     except Exception as error:
         logger.warning("Senso search failed: %s", error)
         senso_chunks = []
@@ -118,7 +152,21 @@ async def run_report_pipeline(
     language_model = create_llm_provider(analytics_config)
     context.narrative = await generate_report_narrative(context, language_model)
 
-    logger.info("Report pipeline: rendering PDF")
+    logger.info("Report pipeline: rendering draft PDF")
+    draft_pdf_bytes = render_report_pdf(context)
+    draft_path = job_directory / "report_draft.pdf"
+    draft_path.write_bytes(draft_pdf_bytes)
+
+    logger.info("Report pipeline: PDF formatting review agent")
+    formatting_review = await review_report_formatting(
+        context,
+        draft_pdf_bytes,
+        language_model,
+    )
+    context.narrative = formatting_review.narrative
+    context.layout_hints = formatting_review.layout_hints
+
+    logger.info("Report pipeline: rendering final PDF")
     pdf_bytes = render_report_pdf(context)
     pdf_path = job_directory / "report.pdf"
     pdf_path.write_bytes(pdf_bytes)

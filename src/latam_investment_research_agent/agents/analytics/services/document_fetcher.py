@@ -18,7 +18,7 @@ import httpx
 import pdfplumber
 
 from latam_investment_research_agent.agents.analytics.services.http_fetch_client import (
-    build_document_fetch_client,
+    fetch_http_document,
 )
 from bs4 import BeautifulSoup
 
@@ -160,35 +160,33 @@ async def fetch_document(source_reference: str) -> str:
         return _fetch_local_pdf(source_reference)
 
     logger.info("Fetching document: %s", source_reference)
-    async with build_document_fetch_client() as http_client:
-        try:
-            response = await http_client.get(source_reference)
-            response.raise_for_status()
-        except httpx.HTTPStatusError as exc:
-            raise DocumentFetchError(
-                source_reference,
-                f"HTTP {exc.response.status_code} response",
-            ) from exc
-        except httpx.RequestError as exc:
-            raise DocumentFetchError(
-                source_reference, f"Network error: {exc}"
-            ) from exc
+    try:
+        response = await fetch_http_document(source_reference)
+    except httpx.HTTPStatusError as exc:
+        raise DocumentFetchError(
+            source_reference,
+            f"HTTP {exc.response.status_code} response",
+        ) from exc
+    except httpx.RequestError as exc:
+        raise DocumentFetchError(
+            source_reference, f"Network error: {exc}"
+        ) from exc
 
-        content_type = response.headers.get("content-type", "")
-        content_length_kb = len(response.content) / 1024
-        url_lower = source_reference.lower()
-        logger.info(
-            "Response received: %.1f KB, content-type: %s",
-            content_length_kb,
-            content_type,
-        )
+    content_type = response.headers.get("content-type", "")
+    content_length_kb = len(response.content) / 1024
+    url_lower = source_reference.lower()
+    logger.info(
+        "Response received: %.1f KB, content-type: %s",
+        content_length_kb,
+        content_type,
+    )
 
-        if _is_pdf_content_type(content_type) or url_lower.endswith(".pdf"):
-            logger.info("Detected PDF — extracting text via pdfplumber")
-            return _extract_text_from_pdf_bytes(response.content, source_reference)
+    if _is_pdf_content_type(content_type) or url_lower.endswith(".pdf"):
+        logger.info("Detected PDF — extracting text via pdfplumber")
+        return _extract_text_from_pdf_bytes(response.content, source_reference)
 
-        logger.info("Detected HTML — extracting table text via BeautifulSoup")
-        return _extract_text_from_html_bytes(response.content)
+    logger.info("Detected HTML — extracting table text via BeautifulSoup")
+    return _extract_text_from_html_bytes(response.content)
 
 
 def _fetch_local_pdf(file_path: str) -> str:
