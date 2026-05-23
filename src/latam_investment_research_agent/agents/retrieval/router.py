@@ -23,6 +23,8 @@ def _has_structured_facts(signal: MarketSignal) -> bool:
 def _should_store_senso(signal: MarketSignal) -> bool:
     if signal.store_senso:
         return True
+    if signal.raw_content_body:
+        return True
     source = signal.source_type.lower().strip()
     if source in SENSO_PREFERRED_SOURCE_TYPES:
         return True

@@ -1,1 +1,1 @@
-"""Agent modules for the LatAm investment research pipeline."""
+"""Agent modules: Nimble acquisition, relevance filter, and retrieval."""

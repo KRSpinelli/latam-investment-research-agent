@@ -1,29 +1,32 @@
-"""Payloads for Senso.ai semantic memory (reports, news, filings)."""
+"""Payloads for Senso.ai semantic memory (raw documents + metadata)."""
 
 from datetime import datetime
+from typing import Any
 
 from pydantic import BaseModel, Field
 
 from latam_investment_research_agent.agents.retrieval.schemas.enums import SignalType
 
 
-class SensoChunk(BaseModel):
-    """Text chunk with citation metadata for grounded retrieval."""
+class SensoRawContent(BaseModel):
+    """
+    Raw document body for Senso ingest (implemented by Senso team).
 
-    chunk_id: str
-    document_id: str
-    text: str
-    chunk_index: int
-    char_start: int | None = None
-    char_end: int | None = None
+    Supports HTML, markdown, PDF bytes, images, etc. Binary payloads use
+    encoding='base64'.
+    """
+
+    content_type: str
+    encoding: str = "utf-8"
+    body: str
 
 
 class SensoDocumentPayload(BaseModel):
     """
-    Full document ingest for Senso.
+    JSON document handed off to Senso.ai.
 
-    Includes chunks + metadata used for filtering and citations in the
-    analysis agent.
+    Includes the raw document plus pipeline metadata for filtering and
+    citations in the analysis agent.
     """
 
     document_id: str
@@ -52,9 +55,11 @@ class SensoDocumentPayload(BaseModel):
     summary: str
     evidence_snippets: list[str] = Field(default_factory=list)
 
-    chunks: list[SensoChunk] = Field(default_factory=list)
+    raw_content: SensoRawContent
 
-    # Citation / traceability back to pipeline
+    nimble_task_id: str | None = None
+    nimble_metadata: dict[str, Any] = Field(default_factory=dict)
+
     relevance_score: float
     confidence: float
     classification_reasoning: str | None = None
