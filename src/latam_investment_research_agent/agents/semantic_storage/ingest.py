@@ -10,8 +10,11 @@ Senso handles all chunking and embedding — we just push the raw text.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Any
+
+import httpx
 
 from .client import SensoClient
 from .companies import BY_TICKER
@@ -86,3 +89,79 @@ async def ingest_filing(
         text=text,
         folder_id=folder_id,
     )
+
+
+def _extract_text_from_html(html: str) -> str:
+    """Strip HTML tags and collapse whitespace."""
+    text = re.sub(r"<(script|style)[^>]*>.*?</(script|style)>", "", html, flags=re.DOTALL)
+    text = re.sub(r"<[^>]+>", " ", text)
+    text = re.sub(r"[ \t]+", " ", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
+
+
+def _extract_text_from_pdf(content: bytes) -> str:
+    """Extract text from PDF bytes using pdfplumber."""
+    try:
+        import io
+        import pdfplumber
+
+        with pdfplumber.open(io.BytesIO(content)) as pdf:
+            pages = [page.extract_text() or "" for page in pdf.pages]
+        return "\n\n".join(p.strip() for p in pages if p.strip())
+    except ImportError as e:
+        raise ImportError(
+            "pdfplumber is required for PDF extraction. "
+            "Install with: pip install pdfplumber"
+        ) from e
+
+
+async def ingest_from_url(
+    url: str,
+    metadata: FilingMetadata,
+    folder_map: FolderMap | None = None,
+    client: SensoClient | None = None,
+) -> dict[str, Any]:
+    """
+    Fetch a URL (PDF or webpage), extract its text, and ingest into Senso KB.
+
+    This is the main entry point for teammates passing URLs from Nimble.
+
+    Args:
+        url:        Direct URL to a PDF or webpage (e.g. CVM filing, news article).
+        metadata:   Filing context — ticker, type, year, etc.
+                    Set source_url to the same URL if you haven't already.
+        folder_map: Pre-built ticker → folder_id map. Auto-built if omitted.
+        client:     Optional shared SensoClient.
+
+    Returns the Senso KB node response dict.
+
+    Example:
+        await ingest_from_url(
+            url="https://www.cooxupe.com.br/wp-content/.../relatorio.pdf",
+            metadata=FilingMetadata(
+                ticker="COOXUPE",
+                filing_type="SR",
+                fiscal_year=2024,
+                source_url="https://www.cooxupe.com.br/wp-content/.../relatorio.pdf",
+            ),
+        )
+    """
+    if not metadata.source_url:
+        metadata.source_url = url
+
+    async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as http:
+        response = await http.get(url, headers={"User-Agent": "LatAmAlpha/1.0"})
+        response.raise_for_status()
+
+    content_type = response.headers.get("content-type", "")
+
+    if "pdf" in content_type or url.lower().endswith(".pdf"):
+        text = _extract_text_from_pdf(response.content)
+    else:
+        text = _extract_text_from_html(response.text)
+
+    if not text.strip():
+        raise ValueError(f"No text could be extracted from {url!r}")
+
+    return await ingest_filing(text, metadata, folder_map, client)
