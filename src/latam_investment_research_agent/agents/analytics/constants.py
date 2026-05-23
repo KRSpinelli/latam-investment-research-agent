@@ -54,5 +54,11 @@ CLICKHOUSE_ORDER_BY_COLUMNS: tuple[str, ...] = (
 )
 """Column order used in the ORDER BY clause of all dynamically created ClickHouse tables."""
 
+CLICKHOUSE_ALTER_MAX_RETRIES: int = 5
+"""Maximum attempts for ``ALTER TABLE`` on ClickHouse Cloud when replicas are catching up."""
+
+CLICKHOUSE_ALTER_RETRY_BASE_DELAY_SECONDS: float = 0.5
+"""Base delay in seconds between retryable ClickHouse ``ALTER`` attempts (exponential backoff)."""
+
 EXPORT_QUESTION_SLUG_MAX_LENGTH: int = 40
 """Maximum character length of the question slug used in CSV export filenames."""

@@ -27,7 +27,7 @@ from latam_investment_research_agent.agents.analytics.graph.rag_query_graph impo
     build_rag_query_graph,
 )
 from latam_investment_research_agent.agents.analytics.providers.clickhouse_provider import (  # noqa: E402
-    create_clickhouse_client,
+    managed_clickhouse_client,
 )
 
 DEFAULT_QUESTION = "What were total export revenues by year?"
@@ -37,14 +37,14 @@ async def main(question: str) -> None:
     print(f"Question: {question}\n")
 
     config = AnalyticsConfig()
-    clickhouse_client = await create_clickhouse_client(config)
-    graph = build_rag_query_graph(config=config, clickhouse_client=clickhouse_client)
+    async with managed_clickhouse_client(config) as clickhouse_client:
+        graph = build_rag_query_graph(config=config, clickhouse_client=clickhouse_client)
+        result = await graph.ainvoke({
+            "natural_language_question": question,
+            "export_row_limit": 10000,
+            "export_directory": "./exports",
+        })
 
-    result = await graph.ainvoke({
-        "natural_language_question": question,
-        "export_row_limit": 10000,
-        "export_directory": "./exports",
-    })
     out = result["rag_query_output"]
 
     if out["export_file_path"] is None:

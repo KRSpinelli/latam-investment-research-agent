@@ -1,4 +1,5 @@
 from datetime import UTC, datetime
+from unittest.mock import AsyncMock, patch
 
 from fastapi.testclient import TestClient
 
@@ -100,3 +101,57 @@ def test_run_research_pipeline() -> None:
     assert len(body["signals"]) >= 1
     assert body["retrieval"]["signals_processed"] >= 1
     assert body["retrieval"]["analysis_packet_id"] is not None
+
+
+def test_run_research_and_ingest_parallel() -> None:
+    client = _test_client()
+    mock_summary = {
+        "source_reference": "https://example.com/soybean-exports",
+        "total_datasets_found": 1,
+        "datasets_succeeded": [],
+        "datasets_failed": [],
+    }
+    mock_senso = {
+        "source_reference": "https://example.com/soybean-exports",
+        "ticker": "RAIL3",
+        "filing_type": "NEWS",
+        "fiscal_year": 2024,
+        "title": "RAIL3 — News Article 2024",
+        "kb_node_id": "node_123",
+        "processing_status": "submitted",
+        "error": None,
+    }
+    with (
+        patch(
+            "latam_investment_research_agent.services.research_and_ingest._ingest_clickhouse_source_safe",
+            new_callable=AsyncMock,
+            return_value=mock_summary,
+        ) as mock_clickhouse_ingest,
+        patch(
+            "latam_investment_research_agent.services.research_and_ingest.ingest_sources_to_senso",
+            new_callable=AsyncMock,
+            return_value=[mock_senso],
+        ) as mock_senso_ingest,
+    ):
+        response = client.post(
+            "/api/v1/research/ingest",
+            json={
+                "query": (
+                    "Identify underfollowed Brazilian companies "
+                    "benefiting from soybean export growth"
+                ),
+                "seed_urls": ["https://example.com/soybean-exports"],
+                "max_documents": 3,
+            },
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["research"]["task_id"].startswith("task_")
+    assert len(body["research"]["documents"]) >= 1
+    assert len(body["ingestion_summaries"]) == 1
+    assert body["ingestion_summaries"][0]["source_reference"] == mock_summary["source_reference"]
+    assert len(body["senso_ingestion_results"]) == 1
+    assert body["senso_ingestion_results"][0]["kb_node_id"] == "node_123"
+    mock_clickhouse_ingest.assert_awaited_once()
+    mock_senso_ingest.assert_awaited_once()
