@@ -8,6 +8,7 @@ from latam_investment_research_agent.schemas.research import (
     ResearchRequest,
     ResearchResponse,
     ResearchWithIngestionResponse,
+    SensoIngestionResultResponse,
 )
 
 __all__ = [
@@ -18,4 +19,5 @@ __all__ = [
     "ResearchRequest",
     "ResearchResponse",
     "ResearchWithIngestionResponse",
+    "SensoIngestionResultResponse",
 ]

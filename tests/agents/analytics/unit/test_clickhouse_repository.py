@@ -15,6 +15,7 @@ from latam_investment_research_agent.agents.analytics.constants import (
 )
 from latam_investment_research_agent.agents.analytics.models.domain import ColumnDefinition
 from latam_investment_research_agent.agents.analytics.repositories.clickhouse_repository import (
+    _run_clickhouse_command_with_alter_retry,
     alter_table_add_columns,
     create_table,
     insert_rows_deduplicated,
@@ -96,6 +97,24 @@ async def test_create_table_uses_correct_order_by() -> None:
     assert "source_reference" in sql_issued
     assert "content_hash" in sql_issued
     assert "ingestion_timestamp" in sql_issued
+
+
+@pytest.mark.asyncio
+async def test_alter_command_retries_transient_replica_lag() -> None:
+    """ALTER commands retry when ClickHouse Cloud reports code 517 replica lag."""
+    client = _make_mock_client()
+    transient_error = Exception(
+        "Code: 517. DB::Exception: CANNOT_ASSIGN_ALTER replica catchup"
+    )
+    client.command = AsyncMock(side_effect=[transient_error, transient_error, None])
+
+    await _run_clickhouse_command_with_alter_retry(
+        client,
+        "ALTER TABLE t ADD COLUMN IF NOT EXISTS x String DEFAULT ''",
+        operation_label="test",
+    )
+
+    assert client.command.await_count == 3
 
 
 @pytest.mark.asyncio

@@ -65,6 +65,29 @@ def _test_client() -> TestClient:
     return TestClient(app)
 
 
+def test_download_research_report_pdf_stub() -> None:
+    client = _test_client()
+    response = client.get(
+        "/api/v1/research/report/pdf",
+        params={"query": "coffee export revenues in Brazil"},
+    )
+
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "application/pdf"
+    assert "attachment" in response.headers["content-disposition"]
+    assert response.content.startswith(b"%PDF")
+
+
+def test_download_research_report_pdf_requires_min_query_length() -> None:
+    client = _test_client()
+    response = client.get(
+        "/api/v1/research/report/pdf",
+        params={"query": "short"},
+    )
+
+    assert response.status_code == 422
+
+
 def test_health() -> None:
     client = _test_client()
     response = client.get("/health")
@@ -111,11 +134,28 @@ def test_run_research_and_ingest_parallel() -> None:
         "datasets_succeeded": [],
         "datasets_failed": [],
     }
-    with patch(
-        "latam_investment_research_agent.services.research_and_ingest.ingest_source_reference",
-        new_callable=AsyncMock,
-        return_value=mock_summary,
-    ) as mock_ingest:
+    mock_senso = {
+        "source_reference": "https://example.com/soybean-exports",
+        "ticker": "RAIL3",
+        "filing_type": "NEWS",
+        "fiscal_year": 2024,
+        "title": "RAIL3 — News Article 2024",
+        "kb_node_id": "node_123",
+        "processing_status": "submitted",
+        "error": None,
+    }
+    with (
+        patch(
+            "latam_investment_research_agent.services.research_and_ingest._ingest_clickhouse_source_safe",
+            new_callable=AsyncMock,
+            return_value=mock_summary,
+        ) as mock_clickhouse_ingest,
+        patch(
+            "latam_investment_research_agent.services.research_and_ingest.ingest_sources_to_senso",
+            new_callable=AsyncMock,
+            return_value=[mock_senso],
+        ) as mock_senso_ingest,
+    ):
         response = client.post(
             "/api/v1/research/ingest",
             json={
@@ -134,4 +174,7 @@ def test_run_research_and_ingest_parallel() -> None:
     assert len(body["research"]["documents"]) >= 1
     assert len(body["ingestion_summaries"]) == 1
     assert body["ingestion_summaries"][0]["source_reference"] == mock_summary["source_reference"]
-    mock_ingest.assert_awaited_once_with("https://example.com/soybean-exports")
+    assert len(body["senso_ingestion_results"]) == 1
+    assert body["senso_ingestion_results"][0]["kb_node_id"] == "node_123"
+    mock_clickhouse_ingest.assert_awaited_once()
+    mock_senso_ingest.assert_awaited_once()

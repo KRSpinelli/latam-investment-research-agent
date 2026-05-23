@@ -1,6 +1,6 @@
 """Sample script: ingest a URL (PDF or webpage) into the Senso KB.
 
-Uses ingest_from_url — auto-detects PDF vs HTML, extracts text,
+Uses ingest_from_url — auto-detects PDF vs HTML, extracts full page text,
 and ingests into the right company folder in Senso.
 
 Usage:

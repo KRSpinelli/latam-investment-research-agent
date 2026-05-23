@@ -54,8 +54,24 @@ class IngestionSummaryResponse(BaseModel):
     datasets_failed: list[DatasetIngestionFailure]
 
 
+class SensoIngestionResultResponse(BaseModel):
+    """Per-document outcome from Senso KB ingestion."""
+
+    source_reference: str
+    ticker: str
+    filing_type: str
+    fiscal_year: int
+    title: str
+    kb_node_id: str | None = None
+    processing_status: str | None = None
+    error: str | None = None
+
+
 class ResearchWithIngestionResponse(BaseModel):
-    """Research pipeline output plus parallel ClickHouse ingestion per document."""
+    """Research pipeline output plus parallel ClickHouse and Senso ingestion."""
 
     research: ResearchResponse
     ingestion_summaries: list[IngestionSummaryResponse] = Field(default_factory=list)
+    senso_ingestion_results: list[SensoIngestionResultResponse] = Field(
+        default_factory=list
+    )

@@ -86,6 +86,23 @@ def _print_ingestion_summaries(result: ResearchWithIngestionResponse) -> None:
         print()
 
 
+def _print_senso_ingestion_results(result: ResearchWithIngestionResponse) -> None:
+    if not result.senso_ingestion_results:
+        print("\nNo documents were ingested into Senso.")
+        return
+
+    print(f"\nIngested {len(result.senso_ingestion_results)} document(s) into Senso:\n")
+    for senso_result in result.senso_ingestion_results:
+        print(f"Source: {senso_result.source_reference}")
+        print(f"  Title:   {senso_result.title}")
+        if senso_result.error:
+            print(f"  ✗ {senso_result.error}")
+        else:
+            print(f"  Node ID: {senso_result.kb_node_id}")
+            print(f"  Status:  {senso_result.processing_status}")
+        print()
+
+
 async def main(query: str) -> None:
     print(f"Research query: {query}\n")
 
@@ -95,8 +112,10 @@ async def main(query: str) -> None:
 
     print("--- Research ---\n")
     _print_research_summary(result)
-    print("\n--- Numeric ingestion ---")
+    print("\n--- ClickHouse ingestion ---")
     _print_ingestion_summaries(result)
+    print("--- Senso ingestion ---")
+    _print_senso_ingestion_results(result)
 
 
 if __name__ == "__main__":

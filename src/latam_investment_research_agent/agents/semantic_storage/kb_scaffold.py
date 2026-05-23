@@ -17,7 +17,10 @@ from .client import SensoClient
 from .companies import BY_SECTOR, ROOT_FOLDER_NAME, SECTORS, Company
 
 
-FolderMap = dict[str, str]  # ticker -> kb_node_id
+FolderMap = dict[str, str]  # ticker or folder key -> kb_node_id
+
+GENERAL_FOLDER_KEY = "GENERAL"
+GENERAL_FOLDER_NAME = "research"
 
 
 async def scaffold_kb(client: SensoClient | None = None) -> FolderMap:
@@ -33,6 +36,10 @@ async def scaffold_kb(client: SensoClient | None = None) -> FolderMap:
     latam = await c.kb_find_or_create_folder(ROOT_FOLDER_NAME, parent_id=root_id)
     latam_id: str = latam["kb_node_id"]
     print(f"  ✓ {ROOT_FOLDER_NAME}  [{latam_id}]")
+
+    research = await c.kb_find_or_create_folder(GENERAL_FOLDER_NAME, parent_id=latam_id)
+    folder_map[GENERAL_FOLDER_KEY] = research["kb_node_id"]
+    print(f"  ✓ {GENERAL_FOLDER_NAME}  [{research['kb_node_id']}]")
 
     for sector in SECTORS:
         companies: list[Company] = BY_SECTOR[sector]
