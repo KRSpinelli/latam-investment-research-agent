@@ -65,6 +65,29 @@ def _test_client() -> TestClient:
     return TestClient(app)
 
 
+def test_download_research_report_pdf_stub() -> None:
+    client = _test_client()
+    response = client.get(
+        "/api/v1/research/report/pdf",
+        params={"query": "coffee export revenues in Brazil"},
+    )
+
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "application/pdf"
+    assert "attachment" in response.headers["content-disposition"]
+    assert response.content.startswith(b"%PDF")
+
+
+def test_download_research_report_pdf_requires_min_query_length() -> None:
+    client = _test_client()
+    response = client.get(
+        "/api/v1/research/report/pdf",
+        params={"query": "short"},
+    )
+
+    assert response.status_code == 422
+
+
 def test_health() -> None:
     client = _test_client()
     response = client.get("/health")
