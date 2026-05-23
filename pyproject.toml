@@ -7,7 +7,9 @@ requires-python = ">=3.12"
 authors = [
   { name = "Kyle Spinelli" }
 ]
-dependencies = []
+dependencies = [
+  "pydantic>=2.10.0",
+]
 
 [project.optional-dependencies]
 dev = [
@@ -40,3 +42,10 @@ testpaths = ["tests"]
 python_version = "3.12"
 strict = true
 mypy_path = "src"
+
+[tool.pyright]
+pythonVersion = "3.12"
+venvPath = "."
+venv = ".venv"
+extraPaths = ["src"]
+include = ["src", "tests"]
