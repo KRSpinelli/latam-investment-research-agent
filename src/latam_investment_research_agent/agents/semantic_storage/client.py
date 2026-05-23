@@ -120,5 +120,5 @@ class SensoClient:
             body["require_scoped_ids"] = True
         data = await self._post("/org/search/context", body)
         if isinstance(data, dict):
-            return list(data.get("chunks", data.get("results", [])))
+            return list(data.get("results", []))
         return list(data)

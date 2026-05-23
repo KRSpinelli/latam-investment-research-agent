@@ -29,7 +29,7 @@ class Chunk:
 def _parse_chunks(raw: list[dict[str, Any]]) -> list[Chunk]:
     return [
         Chunk(
-            content=r.get("text", r.get("content", "")),
+            content=r.get("chunk_text", r.get("text", "")),
             title=r.get("title", ""),
             score=float(r.get("score", r.get("relevance_score", 0.0))),
             content_id=str(r.get("content_id", r.get("kb_content_id", ""))),

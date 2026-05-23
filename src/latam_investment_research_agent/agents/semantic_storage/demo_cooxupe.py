@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import asyncio
 
+import httpx
+
 from .client import SensoClient
 from .ingest import FilingMetadata, ingest_filing
 from .kb_scaffold import scaffold_kb
@@ -108,6 +110,23 @@ inclusion, and community impact in rural Minas Gerais.
 """.strip()
 
 
+async def _safe_ingest(
+    text: str,
+    meta: FilingMetadata,
+    folder_map: dict[str, str],
+    client: SensoClient,
+) -> None:
+    """Ingest a document; skip gracefully if it already exists (409)."""
+    try:
+        node = await ingest_filing(text, meta, folder_map, client)
+        print(f"  ✓ Ingested: {node.get('content_id', 'ok')} — {meta.document_title()}")
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == 409:
+            print(f"  ↩ Already exists, skipping — {meta.document_title()}")
+        else:
+            raise
+
+
 async def run_demo() -> None:
     client = SensoClient()
 
@@ -125,19 +144,20 @@ async def run_demo() -> None:
         ),
         language="pt-BR",
     )
-    article_node = await ingest_filing(INFOMONEY_ARTICLE, article_meta, folder_map, client)
-    print(f"  ✓ Ingested: {article_node.get('kb_node_id')} — {article_meta.document_title()}")
+    await _safe_ingest(INFOMONEY_ARTICLE, article_meta, folder_map, client)
 
     print("\n=== Ingesting Sustainability Report excerpt (Nimble PDF extraction) ===")
     report_meta = FilingMetadata(
         ticker="COOXUPE",
         filing_type="SR",
         fiscal_year=2024,
-        source_url="https://www.cooxupe.com.br/wp-content/uploads/2026/04/ENG_relatorio-web_revisado_completo_compressed.pdf",
+        source_url=(
+            "https://www.cooxupe.com.br/wp-content/uploads/2026/04/"
+            "ENG_relatorio-web_revisado_completo_compressed.pdf"
+        ),
         language="en",
     )
-    report_node = await ingest_filing(SUSTAINABILITY_REPORT_EXCERPT, report_meta, folder_map, client)
-    print(f"  ✓ Ingested: {report_node.get('kb_node_id')} — {report_meta.document_title()}")
+    await _safe_ingest(SUSTAINABILITY_REPORT_EXCERPT, report_meta, folder_map, client)
 
     print("\n=== Sample search (orchestrator query) ===")
     query = "What is Cooxupe's coffee volume forecast and key investment plans?"
