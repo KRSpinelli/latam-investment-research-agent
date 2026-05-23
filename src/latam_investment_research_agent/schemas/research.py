@@ -21,10 +21,11 @@ EXAMPLE_SEED_URLS: list[str] = [
 
 EXAMPLE_QUERIES: list[str] = [
     (
-        "Find underfollowed Brazilian agriculture infrastructure opportunities "
+        "Find underfollowed LatAm agriculture infrastructure opportunities "
         "benefiting from export growth."
     ),
-    "Identify underfollowed Brazilian companies benefiting from soybean export growth",
+    "What were total export revenues by year for coffee exporters in LatAm?",
+    "Identify underfollowed LatAm companies benefiting from soybean export growth",
 ]
 
 

@@ -9,11 +9,11 @@ export function Nav() {
             <div className="relative h-7 w-7">
               <div className="absolute inset-0 rounded-md bg-gradient-to-br from-primary to-accent opacity-90 group-hover:opacity-100 transition" />
               <div className="absolute inset-[3px] rounded-[5px] bg-background flex items-center justify-center">
-                <span className="font-display text-[13px] leading-none text-primary">L</span>
+                <span className="font-display text-[13px] leading-none text-primary">A</span>
               </div>
             </div>
             <span className="font-display text-lg tracking-tight">
-              LatAm Alpha <span className="text-muted-foreground">Agent</span>
+              Amigo<span className="text-muted-foreground">.ai</span>
             </span>
           </Link>
 

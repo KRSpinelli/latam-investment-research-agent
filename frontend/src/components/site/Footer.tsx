@@ -8,11 +8,11 @@ export function Footer() {
           <div>
             <div className="flex items-center gap-2.5">
               <div className="h-7 w-7 rounded-md bg-gradient-to-br from-primary to-accent" />
-              <span className="font-display text-lg">LatAm Alpha Agent</span>
+              <span className="font-display text-lg">Amigo.ai</span>
             </div>
             <p className="mt-4 text-sm text-muted-foreground max-w-sm">
               Autonomous emerging-market intelligence infrastructure. Evidence-grounded
-              research for institutional investors, starting with Brazil.
+              research for institutional investors across LatAm.
             </p>
             <div className="mt-6 flex items-center gap-2 text-xs text-muted-foreground">
               <span className="h-1.5 w-1.5 rounded-full bg-primary pulse-dot" />
@@ -47,7 +47,7 @@ export function Footer() {
         </div>
 
         <div className="mt-14 pt-6 border-t border-border/60 flex flex-col md:flex-row gap-4 items-start md:items-center justify-between text-xs text-muted-foreground">
-          <div>© 2026 LatAm Alpha Agent. Not investment advice.</div>
+          <div>© 2026 Amigo.ai. Not investment advice.</div>
           <div className="font-mono">v0.4.2 · evidence schema 2026-05</div>
         </div>
       </div>

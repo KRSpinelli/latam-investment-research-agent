@@ -10,10 +10,10 @@ import energy from "@/assets/ex-energy.jpg";
 export const Route = createFileRoute("/research")({
   head: () => ({
     meta: [
-      { title: "Research Hub — LatAm Alpha Agent" },
-      { name: "description", content: "Brazil sector intelligence — agriculture, logistics, energy, infrastructure. Grounded, sourced, updated weekly." },
-      { property: "og:title", content: "Research Hub — LatAm Alpha Agent" },
-      { property: "og:description", content: "Brazil sector intelligence — agriculture, logistics, energy, infrastructure." },
+      { title: "Research Hub — Amigo.ai" },
+      { name: "description", content: "LatAm sector intelligence — agriculture, logistics, energy, infrastructure. Grounded, sourced, updated weekly." },
+      { property: "og:title", content: "Research Hub — Amigo.ai" },
+      { property: "og:description", content: "LatAm sector intelligence — agriculture, logistics, energy, infrastructure." },
     ],
   }),
   component: ResearchPage,
@@ -38,7 +38,7 @@ function ResearchPage() {
           <SectionHeader
             align="left"
             eyebrow="Research hub"
-            title={<>Brazil intelligence, <span className="italic text-gradient-emerald">published openly.</span></>}
+            title={<>LatAm intelligence, <span className="italic text-gradient-emerald">published openly.</span></>}
             desc="A growing library of grounded memos across our four coverage sectors. Every claim is source-linked."
           />
 

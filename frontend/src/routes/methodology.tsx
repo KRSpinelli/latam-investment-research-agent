@@ -8,9 +8,9 @@ import pipeline from "@/assets/ex-pipeline.jpg";
 export const Route = createFileRoute("/methodology")({
   head: () => ({
     meta: [
-      { title: "Methodology — LatAm Alpha Agent" },
-      { name: "description", content: "How the agent discovers, extracts, classifies and grounds Brazil market intelligence. Evidence-first by design." },
-      { property: "og:title", content: "Methodology — LatAm Alpha Agent" },
+      { title: "Methodology — Amigo.ai" },
+      { name: "description", content: "How the agent discovers, extracts, classifies and grounds LatAm market intelligence. Evidence-first by design." },
+      { property: "og:title", content: "Methodology — Amigo.ai" },
       { property: "og:description", content: "Evidence-first AI research analyst for emerging markets. Here's how it works." },
     ],
   }),

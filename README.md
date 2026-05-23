@@ -37,6 +37,38 @@ curl -X POST http://localhost:8000/api/v1/research \
 
 Demo queries and seed URLs: `GET /api/v1/research/examples`
 
+### Analyst report (async PDF)
+
+Same flow as the homepage query box and `samples/generate_report.py`:
+
+```bash
+# Terminal 1 — API
+uv run latam-api
+
+# Terminal 2 — sample script
+uv run python samples/generate_report.py "What were total export revenues by year?"
+
+# Or use the web UI (no auth)
+cd frontend && npm install && npm run dev
+# Open http://localhost:5173 — submit a question on the homepage
+```
+
+Endpoints:
+
+- `POST /api/v1/research/report/jobs` — start job (`{"query": "..."}`)
+- `GET /api/v1/research/report/jobs/{job_id}` — poll status
+- `GET /api/v1/research/report/jobs/{job_id}/pdf` — download when `status` is `completed`
+
+### Frontend
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+Vite proxies `/api` to `http://127.0.0.1:8000` in development. Set `VITE_API_BASE_URL` in `frontend/.env` if the API runs elsewhere.
+
 ### Pipeline
 
 ```text
