@@ -12,7 +12,6 @@ from latam_investment_research_agent.agents.analytics.models.domain import (
     DatasetIngestionFailure,
     DatasetIngestionResult,
     ExtractedDataset,
-    RoutingDecision,
 )
 
 
@@ -27,13 +26,7 @@ class IngestionState(TypedDict, total=False):
         raw_content: Raw text extracted from the document (pages joined).
             ``None`` if the fetch node failed.
         extracted_datasets: All datasets identified by the extraction node.
-        current_dataset_index: Index into ``extracted_datasets`` for the
-            routing/write loop.  Incremented by the write node after each
-            dataset is processed.
-        routing_decision: The LLM-generated routing decision for the current
-            dataset (populated by route_dataset_node, consumed by
-            write_to_clickhouse_node).
-        ingestion_results: Accumulates successful write results.
+        ingestion_results: Successful write results from ``persist_datasets_node``.
         ingestion_failures: Accumulates failed write details.
         ingestion_summary: Final compiled summary populated by the terminal node.
         error: Set by any node that encounters a fatal error halting the graph.
@@ -42,8 +35,6 @@ class IngestionState(TypedDict, total=False):
     source_reference: str
     raw_content: str | None
     extracted_datasets: list[ExtractedDataset]
-    current_dataset_index: int
-    routing_decision: RoutingDecision
     ingestion_results: list[DatasetIngestionResult]
     ingestion_failures: list[DatasetIngestionFailure]
     ingestion_summary: IngestionSummary

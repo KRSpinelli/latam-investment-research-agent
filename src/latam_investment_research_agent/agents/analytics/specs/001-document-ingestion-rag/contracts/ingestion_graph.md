@@ -62,13 +62,10 @@ START
       LLM call (gpt-4o-mini) extracts structured datasets from raw_content.
       Sets: extracted_datasets.
 
-  → route_dataset_node  ──────────────────────────────────────────────────┐
-      LLM call determines target_table or "create new" for current dataset.│
-      Conditional edge: if more datasets remain, loops back here. ◄────────┘
-
-  → write_to_clickhouse_node
-      Writes rows for current dataset. Appends to ingestion_results or
-      ingestion_failures. Loops back to route_dataset_node.
+  → persist_datasets_node
+      Introspects ClickHouse schema once, routes all datasets in parallel,
+      applies create/alter DDL in parallel, and bulk-inserts rows in parallel.
+      Appends to ingestion_results or ingestion_failures per dataset.
 
   → build_ingestion_summary_node
       Compiles IngestionSummary from ingestion_results and ingestion_failures.
