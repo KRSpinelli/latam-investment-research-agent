@@ -7,9 +7,9 @@ import { SectionHeader } from "@/components/site/Evidence";
 export const Route = createFileRoute("/contact")({
   head: () => ({
     meta: [
-      { title: "Contact — LatAm Alpha Agent" },
-      { name: "description", content: "Request a sample grounded memo on a Brazil ticker of your choice. Typically back within 24 hours." },
-      { property: "og:title", content: "Contact — LatAm Alpha Agent" },
+      { title: "Contact — Amigo.ai" },
+      { name: "description", content: "Request a sample grounded memo on a LatAm ticker of your choice. Typically back within 24 hours." },
+      { property: "og:title", content: "Contact — Amigo.ai" },
       { property: "og:description", content: "Request access, an API key, or a sample memo." },
     ],
   }),
@@ -27,7 +27,7 @@ function ContactPage() {
             align="left"
             eyebrow="Request access"
             title={<>Talk to the <span className="italic text-gradient-emerald">research team.</span></>}
-            desc="Tell us your firm and what you'd like to see. We'll usually run a sample memo on a Brazil ticker of your choice within 24 hours."
+            desc="Tell us your firm and what you'd like to see. We'll usually run a sample memo on a LatAm ticker of your choice within 24 hours."
           />
 
           <form className="mt-12 glass-strong rounded-3xl p-8 space-y-5" onSubmit={(e) => { e.preventDefault(); alert("Thanks — we'll be in touch."); }}>

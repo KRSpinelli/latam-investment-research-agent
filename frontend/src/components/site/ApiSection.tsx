@@ -9,7 +9,7 @@ export function ApiSection() {
             <SectionHeader
               align="left"
               eyebrow="Agent-native API"
-              title={<>Pipe structured Brazil evidence <span className="italic text-gradient-emerald">into your own stack.</span></>}
+              title={<>Pipe structured LatAm evidence <span className="italic text-gradient-emerald">into your own stack.</span></>}
               desc="Typed evidence objects, conviction scores, citations, and routing metadata — exposed via a clean REST + streaming API. Pay-per-call, observable, agent-friendly."
             />
             <div className="mt-8 flex flex-wrap gap-3">

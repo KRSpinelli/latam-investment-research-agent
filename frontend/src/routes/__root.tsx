@@ -72,7 +72,7 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
     meta: [
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
-      { title: "LatAm Alpha Agent — Underfollowed Brazil signals, grounded." },
+      { title: "Amigo.ai — Underfollowed LatAm signals, grounded." },
       { name: "description", content: "Autonomous AI research analyst for emerging-market alpha. Evidence-first, agent-native, API-ready." },
       { name: "theme-color", content: "#0a1118" },
       { property: "og:type", content: "website" },

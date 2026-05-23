@@ -5,7 +5,7 @@ export function Coverage() {
     {
       name: "Agriculture",
       tag: "P0 wedge",
-      sources: ["CONAB", "USDA Brazil desk", "B3 grain futures", "Santos port data", "Satellite NDVI"],
+      sources: ["CONAB", "USDA LatAm desk", "B3 grain futures", "Santos port data", "Satellite NDVI"],
       kpis: [["Coverage", "78%"], ["Sources", "412"], ["Daily metrics", "8.2k"]],
     },
     {
@@ -33,8 +33,8 @@ export function Coverage() {
       <div className="mx-auto max-w-7xl px-6">
         <SectionHeader
           eyebrow="Coverage"
-          title={<>Four sectors. <span className="italic text-gradient-warm">One Brazil.</span></>}
-          desc="We start where the alpha lives — sectors where Brazil is structurally global, but coverage in English is structurally thin."
+          title={<>Four sectors. <span className="italic text-gradient-warm">One LatAm.</span></>}
+          desc="We start where the alpha lives — sectors where LatAm is structurally global, but coverage in English is structurally thin."
         />
 
         <div className="mt-14 grid gap-4 md:grid-cols-2">

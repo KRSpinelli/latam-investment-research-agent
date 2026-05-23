@@ -8,10 +8,10 @@ import { SectionHeader } from "@/components/site/Evidence";
 export const Route = createFileRoute("/api")({
   head: () => ({
     meta: [
-      { title: "API — LatAm Alpha Agent" },
+      { title: "API — Amigo.ai" },
       { name: "description", content: "Agent-native market intelligence API. Typed evidence objects, streaming signals, pay-per-call. Built for institutional research stacks." },
-      { property: "og:title", content: "API — LatAm Alpha Agent" },
-      { property: "og:description", content: "Pipe structured Brazil evidence into your own agent or quant stack." },
+      { property: "og:title", content: "API — Amigo.ai" },
+      { property: "og:description", content: "Pipe structured LatAm evidence into your own agent or quant stack." },
     ],
   }),
   component: ApiPage,

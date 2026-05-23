@@ -9,7 +9,7 @@ export function Stats() {
           <div className="grid md:grid-cols-4 gap-10 relative">
             {[
               ["12.4k", "sources crawled daily"],
-              ["4", "sectors live across Brazil"],
+              ["4", "sectors live across LatAm"],
               ["0.94", "average extraction precision"],
               ["100%", "claims linked to evidence"],
             ].map(([n, l]) => (
@@ -27,7 +27,7 @@ export function Stats() {
 
 export function WhoFor() {
   const personas = [
-    { who: "Hedge funds", desc: "Underfollowed Brazil signals before they hit Bloomberg." },
+    { who: "Hedge funds", desc: "Underfollowed LatAm signals before they hit Bloomberg." },
     { who: "PE & VC", desc: "Diligence on LatAm targets with sourced evidence packets." },
     { who: "Commodity desks", desc: "Soy, sugar, pulp, iron ore — port to processor." },
     { who: "Macro teams", desc: "Country-level structural reads with citations." },
@@ -67,7 +67,7 @@ export function CTA() {
             See the agent run on a <span className="italic text-gradient-emerald">real thesis.</span>
           </h2>
           <p className="mt-5 max-w-xl mx-auto text-muted-foreground">
-            We'll generate a full grounded memo on a Brazil ticker of your choice — usually back within 24 hours.
+            We'll generate a full grounded memo on a LatAm ticker of your choice — usually back within 24 hours.
           </p>
           <div className="mt-8 flex flex-wrap justify-center gap-3">
             <a href="/contact" className="bg-primary text-primary-foreground rounded-full px-6 py-3 text-sm font-medium hover:opacity-90 transition glow-emerald">

@@ -10,14 +10,14 @@ const examples = [
   {
     img: memo,
     tag: "Research memo",
-    title: "Brazil soy export thesis Q3",
+    title: "LatAm soy export thesis Q3",
     desc: "Full grounded memo with 14 evidence objects, confidence 0.82, ready to drop into the IC deck.",
     accent: "emerald",
   },
   {
     img: signals,
     tag: "Live signal feed",
-    title: "Underfollowed Brazil tickers",
+    title: "Underfollowed LatAm tickers",
     desc: "Real-time signal stream with classification, conviction band, and one-click drill into the source evidence.",
     accent: "amber",
   },

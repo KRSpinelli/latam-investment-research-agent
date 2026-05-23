@@ -12,9 +12,9 @@ import { Stats, WhoFor, CTA } from "@/components/site/Sections";
 export const Route = createFileRoute("/")({
   head: () => ({
     meta: [
-      { title: "LatAm Alpha Agent — Underfollowed Brazil signals, grounded." },
-      { name: "description", content: "Autonomous AI research analyst for emerging-market alpha. Discovers, classifies and grounds Brazil investment signals — every claim traceable to source." },
-      { property: "og:title", content: "LatAm Alpha Agent — Underfollowed Brazil signals, grounded." },
+      { title: "Amigo.ai — Underfollowed LatAm signals, grounded." },
+      { name: "description", content: "Autonomous AI research analyst for emerging-market alpha. Discovers, classifies and grounds LatAm investment signals — every claim traceable to source." },
+      { property: "og:title", content: "Amigo.ai — Underfollowed LatAm signals, grounded." },
       { property: "og:description", content: "Autonomous AI research analyst for emerging-market alpha. Evidence-first, agent-native, API-ready." },
     ],
   }),
