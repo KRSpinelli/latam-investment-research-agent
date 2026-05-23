@@ -7,6 +7,7 @@ never modify any data.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -16,6 +17,30 @@ from latam_investment_research_agent.agents.analytics.models.domain import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+async def _describe_table(client: Any, table_name: str) -> TableSchema:
+    """Describe one ClickHouse table and return its schema.
+
+    Args:
+        client: An async-compatible clickhouse_connect client instance.
+        table_name: Name of the table to describe.
+
+    Returns:
+        A ``TableSchema`` for the given table.
+    """
+    describe_result = await client.query(f"DESCRIBE TABLE {table_name}")
+    columns = [
+        ColumnInfo(column_name=row[0], column_type=row[1])
+        for row in describe_result.result_rows
+    ]
+    logger.debug(
+        "  %s: %d column(s) — %s",
+        table_name,
+        len(columns),
+        ", ".join(column.column_name for column in columns),
+    )
+    return TableSchema(table_name=table_name, columns=columns)
 
 
 async def get_all_table_schemas(client: Any) -> list[TableSchema]:
@@ -49,19 +74,8 @@ async def get_all_table_schemas(client: Any) -> list[TableSchema]:
         return []
 
     logger.info("Found %d table(s): %s", len(table_names), ", ".join(table_names))
-    table_schemas: list[TableSchema] = []
-    for table_name in table_names:
-        describe_result = await client.query(f"DESCRIBE TABLE {table_name}")
-        columns = [
-            ColumnInfo(column_name=row[0], column_type=row[1])
-            for row in describe_result.result_rows
-        ]
-        logger.debug(
-            "  %s: %d column(s) — %s",
-            table_name,
-            len(columns),
-            ", ".join(c.column_name for c in columns),
+    return list(
+        await asyncio.gather(
+            *[_describe_table(client, table_name) for table_name in table_names]
         )
-        table_schemas.append(TableSchema(table_name=table_name, columns=columns))
-
-    return table_schemas
+    )

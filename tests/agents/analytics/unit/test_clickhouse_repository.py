@@ -21,15 +21,41 @@ from latam_investment_research_agent.agents.analytics.repositories.clickhouse_re
 )
 
 
+def _default_describe_rows() -> list[tuple[str, str]]:
+    """Return default DESCRIBE TABLE rows for repository unit tests.
+
+    Returns:
+        Column name and type pairs including audit and sample data columns.
+    """
+    return [
+        ("source_reference", "String"),
+        ("ingestion_timestamp", "DateTime64(3, 'UTC')"),
+        ("content_hash", "String"),
+        ("year", "UInt16"),
+        ("revenue", "Decimal(18,4)"),
+    ]
+
+
 def _make_mock_client() -> MagicMock:
     """Build a mock clickhouse_connect async client with a recorded command history.
 
     Returns:
-        MagicMock with ``command`` and ``query`` coroutines.
+        MagicMock with ``command``, ``query``, and ``insert`` coroutines.
     """
+    describe_rows = _default_describe_rows()
+
+    async def mock_query(sql: str, *args: object, **kwargs: object) -> MagicMock:
+        result = MagicMock()
+        if "DESCRIBE TABLE" in sql:
+            result.result_rows = describe_rows
+        else:
+            result.result_rows = []
+        return result
+
     client = MagicMock()
     client.command = AsyncMock(return_value=None)
-    client.query = AsyncMock(return_value=MagicMock(result_rows=[]))
+    client.query = AsyncMock(side_effect=mock_query)
+    client.insert = AsyncMock(return_value=None)
     return client
 
 
@@ -92,16 +118,29 @@ async def test_alter_table_add_columns_generates_correct_sql() -> None:
 
 
 @pytest.mark.asyncio
-async def test_insert_rows_deduplicated_uses_not_in_dedup_pattern() -> None:
-    """insert_rows_deduplicated uses the NOT IN deduplication pattern."""
+async def test_insert_rows_deduplicated_prefetches_existing_hashes() -> None:
+    """insert_rows_deduplicated queries existing content hashes for the source."""
     client = _make_mock_client()
     rows = [{"year": 2023, "revenue": "1000.00"}]
     await insert_rows_deduplicated(client, "test_table", rows, "https://example.com/doc.pdf")
 
-    sql_issued: str = client.command.call_args[0][0]
-    assert "NOT IN" in sql_issued or "WHERE" in sql_issued
-    assert "source_reference" in sql_issued
-    assert "content_hash" in sql_issued
+    hash_query: str = client.query.call_args[0][0]
+    assert "SELECT content_hash" in hash_query
+    assert "source_reference" in hash_query
+    assert "https://example.com/doc.pdf" in hash_query
+
+
+@pytest.mark.asyncio
+async def test_insert_rows_deduplicated_uses_batch_insert() -> None:
+    """insert_rows_deduplicated issues one batch insert for multiple new rows."""
+    client = _make_mock_client()
+    rows = [{"year": 2023}, {"year": 2024}]
+    await insert_rows_deduplicated(client, "test_table", rows, "https://example.com/doc.pdf")
+
+    client.insert.assert_awaited_once()
+    insert_data = client.insert.call_args[0][1]
+    assert len(insert_data) == 2
+    assert client.command.await_count == 0
 
 
 @pytest.mark.asyncio
@@ -115,8 +154,38 @@ async def test_insert_rows_deduplicated_computes_full_sha256_hash() -> None:
     assert len(expected_hash) == 64
 
     await insert_rows_deduplicated(client, "test_table", [row], "https://example.com/doc.pdf")
-    sql_issued: str = client.command.call_args[0][0]
-    assert expected_hash in sql_issued
+    insert_data = client.insert.call_args[0][1]
+    column_names = client.insert.call_args[1]["column_names"]
+    hash_index = list(column_names).index("content_hash")
+    assert insert_data[0][hash_index] == expected_hash
+
+
+@pytest.mark.asyncio
+async def test_insert_rows_deduplicated_skips_duplicate_hashes_without_insert() -> None:
+    """Rows whose hash already exists are filtered before insert."""
+    client = _make_mock_client()
+    row = {"year": 2023, "revenue": "1000.00"}
+    existing_hash = hashlib.sha256(
+        json.dumps(row, sort_keys=True, default=str).encode()
+    ).hexdigest()
+    describe_rows = _default_describe_rows()
+
+    async def mock_query(sql: str, *args: object, **kwargs: object) -> MagicMock:
+        result = MagicMock()
+        if "DESCRIBE TABLE" in sql:
+            result.result_rows = describe_rows
+        else:
+            result.result_rows = [(existing_hash,)]
+        return result
+
+    client.query = AsyncMock(side_effect=mock_query)
+
+    count = await insert_rows_deduplicated(
+        client, "test_table", [row], "https://example.com/doc.pdf"
+    )
+
+    assert count == 0
+    client.insert.assert_not_awaited()
 
 
 @pytest.mark.asyncio

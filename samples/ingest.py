@@ -42,7 +42,11 @@ async def main(source_reference: str) -> None:
     clickhouse_client = await create_clickhouse_client(config)
     graph = build_ingestion_graph(config=config, clickhouse_client=clickhouse_client)
 
-    result = await graph.ainvoke({"source_reference": source_reference})
+    try:
+        result = await graph.ainvoke({"source_reference": source_reference})
+    finally:
+        await clickhouse_client.close()
+
     summary = result["ingestion_summary"]
 
     print(f"\nDatasets found:  {summary['total_datasets_found']}")
