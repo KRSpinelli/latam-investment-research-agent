@@ -18,6 +18,7 @@ from latam_investment_research_agent.agents.analytics.models.domain import (
 )
 from latam_investment_research_agent.agents.analytics.services.query_assembler import (
     assemble_queries,
+    ensure_source_reference_in_select,
 )
 
 # ---------------------------------------------------------------------------
@@ -65,6 +66,39 @@ def _make_llm_returning(queries: list[str]) -> MagicMock:
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
+
+def test_ensure_source_reference_in_select_adds_column_for_simple_query() -> None:
+    """Missing source_reference is injected into a simple SELECT list."""
+    sql_query = "SELECT year, revenue FROM export_revenue LIMIT 10000"
+    rewritten = ensure_source_reference_in_select(sql_query)
+    assert "source_reference" in rewritten.lower()
+    assert rewritten.lower().startswith("select source_reference,")
+
+
+def test_ensure_source_reference_in_select_uses_any_for_group_by() -> None:
+    """Aggregated queries receive any(source_reference) when the column is omitted."""
+    sql_query = (
+        "SELECT year, sum(revenue) AS total_revenue "
+        "FROM export_revenue GROUP BY year LIMIT 10000"
+    )
+    rewritten = ensure_source_reference_in_select(sql_query)
+    assert "any(source_reference)" in rewritten.lower()
+
+
+@pytest.mark.asyncio
+async def test_assemble_queries_injects_source_reference(
+    sample_schemas: list[TableSchema],
+) -> None:
+    """assemble_queries rewrites LLM SQL to include source_reference."""
+    llm = _make_llm_returning(["SELECT year, revenue FROM export_revenue LIMIT 10000"])
+    result = await assemble_queries(
+        question="What were total export revenues by year?",
+        selected_schemas=sample_schemas,
+        llm=llm,
+    )
+    assert len(result) == 1
+    assert "source_reference" in result[0].lower()
+
 
 @pytest.mark.asyncio
 async def test_assemble_queries_returns_nonempty_list(sample_schemas: list[TableSchema]) -> None:

@@ -11,15 +11,19 @@ See: plan.md § RAG Query: SELECT-Only Guard
 from __future__ import annotations
 
 import logging
+import re
 
 from langchain_core.language_models import BaseChatModel
 from pydantic import BaseModel
 
+from latam_investment_research_agent.agents.analytics.constants import MANDATORY_AUDIT_COLUMNS
 from latam_investment_research_agent.agents.analytics.models.domain import TableSchema
 
 logger = logging.getLogger(__name__)
 
-_SYSTEM_PROMPT = """\
+_SOURCE_REFERENCE_COLUMN = MANDATORY_AUDIT_COLUMNS[0]
+
+_SYSTEM_PROMPT = f"""\
 You are a ClickHouse SQL expert.  The user has a financial data question and you
 must answer it by generating ClickHouse-compatible SELECT statements.
 
@@ -28,6 +32,10 @@ Rules:
   any other data-manipulation or schema-altering statement.
 - Each query must include a LIMIT clause using the row limit provided.
 - Use exact table and column names from the schemas provided.
+- Every query MUST expose the document URL column ``{_SOURCE_REFERENCE_COLUMN}``:
+  include it in the SELECT list for row-level queries, or use
+  ``any({_SOURCE_REFERENCE_COLUMN}) AS {_SOURCE_REFERENCE_COLUMN}`` when using
+  GROUP BY / aggregates.
 - Prefer simple queries; join only when necessary.
 - Do not explain the queries — return only the SQL text.
 """
@@ -71,6 +79,47 @@ def _is_select_query(query: str) -> bool:
         True when the stripped, uppercased query starts with ``SELECT``.
     """
     return query.strip().upper().startswith("SELECT")
+
+
+def ensure_source_reference_in_select(sql_query: str) -> str:
+    """Ensure a SELECT query returns the ``source_reference`` audit column.
+
+    When the LLM omits ``source_reference``, this function rewrites the SELECT
+    list so exports can always include the ingested document URL.
+
+    Args:
+        sql_query: A validated SELECT query string.
+
+    Returns:
+        The same query, or a rewritten query that includes ``source_reference``.
+    """
+    stripped_query = sql_query.strip().rstrip(";")
+    if _SOURCE_REFERENCE_COLUMN in stripped_query.lower():
+        return stripped_query
+
+    from_match = re.search(r"\s+from\s+", stripped_query, flags=re.IGNORECASE)
+    if from_match is None:
+        return stripped_query
+
+    select_clause = stripped_query[: from_match.start()]
+    remainder = stripped_query[from_match.start() :]
+
+    if re.fullmatch(r"(?is)\s*select\s+\*\s*", select_clause):
+        return stripped_query
+
+    select_list = re.sub(r"(?is)^\s*select\s+", "", select_clause).strip()
+    if not select_list:
+        return stripped_query
+
+    if re.search(r"(?i)\bgroup\s+by\b", remainder):
+        rewritten_select = (
+            f"SELECT {select_list}, "
+            f"any({_SOURCE_REFERENCE_COLUMN}) AS {_SOURCE_REFERENCE_COLUMN}"
+        )
+    else:
+        rewritten_select = f"SELECT {_SOURCE_REFERENCE_COLUMN}, {select_list}"
+
+    return f"{rewritten_select}{remainder}"
 
 
 async def assemble_queries(
@@ -118,7 +167,7 @@ async def assemble_queries(
     validated_queries: list[str] = []
     for query in response.sql_queries:
         if _is_select_query(query):
-            validated_queries.append(query)
+            validated_queries.append(ensure_source_reference_in_select(query))
         else:
             logger.warning(
                 "LLM returned a non-SELECT query — discarding: %r",

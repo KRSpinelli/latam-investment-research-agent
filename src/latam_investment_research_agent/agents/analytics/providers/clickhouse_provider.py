@@ -15,7 +15,10 @@ Example::
 
 from __future__ import annotations
 
+import asyncio
 import logging
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from typing import Any
 
 import clickhouse_connect
@@ -65,3 +68,40 @@ async def create_clickhouse_client(config: AnalyticsConfig) -> Any:
     client = await clickhouse_connect.get_async_client(**client_kwargs)
     logger.info("ClickHouse connection established")
     return client
+
+
+async def close_clickhouse_client(client: Any) -> None:
+    """Close an async ClickHouse client and release its HTTP connection pool.
+
+    Args:
+        client: An async client returned by ``create_clickhouse_client``.
+    """
+    close_method = getattr(client, "close", None)
+    if close_method is None:
+        return
+    await close_method()
+    # Yield so aiohttp can finish closing connectors on the event loop.
+    await asyncio.sleep(0)
+
+
+@asynccontextmanager
+async def managed_clickhouse_client(
+    config: AnalyticsConfig,
+) -> AsyncIterator[Any]:
+    """Open a ClickHouse client for a scoped block and close it on exit.
+
+    Args:
+        config: Analytics configuration containing ClickHouse connection settings.
+
+    Yields:
+        An async clickhouse_connect client instance.
+
+    Example:
+        async with managed_clickhouse_client(config) as client:
+            await client.query("SELECT 1")
+    """
+    client = await create_clickhouse_client(config)
+    try:
+        yield client
+    finally:
+        await close_clickhouse_client(client)
