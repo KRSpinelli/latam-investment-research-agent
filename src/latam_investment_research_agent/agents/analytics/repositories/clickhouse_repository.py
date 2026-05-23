@@ -10,6 +10,7 @@ possible to prevent injection.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
@@ -22,8 +23,42 @@ from latam_investment_research_agent.agents.analytics.constants import (
     MANDATORY_AUDIT_COLUMNS,
 )
 from latam_investment_research_agent.agents.analytics.models.domain import ColumnDefinition
+from latam_investment_research_agent.agents.analytics.repositories.row_preparation import (
+    _quote_column_identifier,
+    coerce_cell_value,
+    normalize_rows,
+)
 
 logger = logging.getLogger(__name__)
+
+
+def _format_clickhouse_datetime64_utc(moment: datetime) -> str:
+    """Format a UTC moment for ClickHouse ``DateTime64(3, 'UTC')`` columns.
+
+    ClickHouse accepts ``YYYY-MM-DD HH:MM:SS.sss`` but not ISO 8601 timezone
+    suffixes such as ``+00:00``.
+
+    Args:
+        moment: A timezone-aware or naive datetime in UTC.
+
+    Returns:
+        A string with millisecond precision, e.g. ``2026-05-23 18:09:04.896``.
+    """
+    if moment.tzinfo is not None:
+        moment = moment.astimezone(UTC).replace(tzinfo=None)
+    return moment.strftime("%Y-%m-%d %H:%M:%S.%f")[:23]
+
+
+def _escape_sql_string(value: str) -> str:
+    """Escape a string for safe inclusion in a ClickHouse SQL literal.
+
+    Args:
+        value: Raw string value.
+
+    Returns:
+        Value with single quotes doubled for SQL string literals.
+    """
+    return value.replace("'", "''")
 
 
 def _compute_content_hash(row: dict[str, Any]) -> str:
@@ -67,7 +102,7 @@ def _build_create_table_sql(
         "content_hash String",
     ]
     data_column_definitions = [
-        f"{column.column_name} {column.clickhouse_type}"
+        f"{_quote_column_identifier(column.column_name)} {column.clickhouse_type}"
         for column in data_columns
     ]
     all_column_definitions = audit_column_definitions + data_column_definitions
@@ -118,6 +153,84 @@ async def create_table(
     await client.command(sql)
 
 
+async def get_table_column_types(client: Any, table_name: str) -> dict[str, str]:
+    """Return a mapping of column name to ClickHouse type for one table.
+
+    Args:
+        client: An async-compatible clickhouse_connect client instance.
+        table_name: Table to describe.
+
+    Returns:
+        Dict of column_name → type string from ``DESCRIBE TABLE``.
+    """
+    describe_result = await client.query(f"DESCRIBE TABLE {table_name}")
+    return {row[0]: row[1] for row in describe_result.result_rows}
+
+
+async def ensure_row_columns_exist(
+    client: Any,
+    table_name: str,
+    rows: list[dict[str, Any]],
+) -> dict[str, str]:
+    """Add any row keys missing from the table as ``String`` columns.
+
+    Args:
+        client: An async-compatible clickhouse_connect client instance.
+        table_name: Target table name.
+        rows: Normalized row dicts for one dataset.
+
+    Returns:
+        Updated column name → type mapping after any ``ALTER TABLE`` calls.
+    """
+    column_types = await get_table_column_types(client, table_name)
+    row_keys: set[str] = set()
+    for row in rows:
+        row_keys.update(row.keys())
+    row_keys -= set(MANDATORY_AUDIT_COLUMNS)
+
+    missing_keys = sorted(key for key in row_keys if key not in column_types)
+    if missing_keys:
+        new_columns = [
+            ColumnDefinition(
+                column_name=column_key,
+                clickhouse_type="String",
+                description="Auto-added to match extracted row keys.",
+            )
+            for column_key in missing_keys
+        ]
+        await alter_table_add_columns(client, table_name, new_columns)
+        column_types = await get_table_column_types(client, table_name)
+
+    return column_types
+
+
+async def _alter_table_add_single_column(
+    client: Any,
+    table_name: str,
+    column: ColumnDefinition,
+) -> None:
+    """Issue one ``ALTER TABLE ... ADD COLUMN`` statement.
+
+    Args:
+        client: An async-compatible clickhouse_connect client instance.
+        table_name: Name of the existing table to modify.
+        column: Column definition to add.
+    """
+    quoted_column = _quote_column_identifier(column.column_name)
+    sql = (
+        f"ALTER TABLE {table_name} "
+        f"ADD COLUMN IF NOT EXISTS {quoted_column} {column.clickhouse_type} "
+        f"DEFAULT ''"
+    )
+    logger.info(
+        "Adding column '%s' (%s) to table '%s'",
+        column.column_name,
+        column.clickhouse_type,
+        table_name,
+    )
+    await client.command(sql)
+
+
 async def alter_table_add_columns(
     client: Any,
     table_name: str,
@@ -127,26 +240,61 @@ async def alter_table_add_columns(
 
     Issues one ``ALTER TABLE ... ADD COLUMN`` statement per new column with a
     default value of an empty string (compatible with most ClickHouse types via
-    implicit casting).
+    implicit casting).  Column additions run concurrently.
 
     Args:
         client: An async-compatible clickhouse_connect client instance.
         table_name: Name of the existing table to modify.
         new_columns: Columns to add.  Must not include audit column names.
     """
-    for column in new_columns:
-        sql = (
-            f"ALTER TABLE {table_name} "
-            f"ADD COLUMN IF NOT EXISTS {column.column_name} {column.clickhouse_type} "
-            f"DEFAULT ''"
-        )
-        logger.info(
-            "Adding column '%s' (%s) to table '%s'",
-            column.column_name,
-            column.clickhouse_type,
-            table_name,
-        )
-        await client.command(sql)
+    if not new_columns:
+        return
+    await asyncio.gather(
+        *[
+            _alter_table_add_single_column(client, table_name, column)
+            for column in new_columns
+        ]
+    )
+
+
+async def create_tables_parallel(
+    client: Any,
+    table_specs: list[tuple[str, list[ColumnDefinition]]],
+) -> None:
+    """Create multiple ClickHouse tables concurrently.
+
+    Each spec is ``(table_name, data_columns)``.  Uses ``CREATE TABLE IF NOT EXISTS``
+    so duplicate table names in the spec list are safe.
+
+    Args:
+        client: An async-compatible clickhouse_connect client instance.
+        table_specs: Unique or duplicate table creation requests.
+    """
+    if not table_specs:
+        return
+    await asyncio.gather(
+        *[create_table(client, table_name, columns) for table_name, columns in table_specs]
+    )
+
+
+async def alter_tables_parallel(
+    client: Any,
+    alter_specs: list[tuple[str, list[ColumnDefinition]]],
+) -> None:
+    """Add columns to multiple tables concurrently.
+
+    Args:
+        client: An async-compatible clickhouse_connect client instance.
+        alter_specs: List of ``(table_name, new_columns)`` pairs.
+    """
+    if not alter_specs:
+        return
+    await asyncio.gather(
+        *[
+            alter_table_add_columns(client, table_name, new_columns)
+            for table_name, new_columns in alter_specs
+        ]
+    )
 
 
 async def insert_rows_deduplicated(
@@ -178,10 +326,13 @@ async def insert_rows_deduplicated(
     if not rows:
         return 0
 
-    ingestion_timestamp = datetime.now(tz=UTC).isoformat()
+    normalized_rows = normalize_rows(rows)
+    column_types = await ensure_row_columns_exist(client, table_name, normalized_rows)
+
+    ingestion_timestamp = _format_clickhouse_datetime64_utc(datetime.now(tz=UTC))
     enriched_rows: list[dict[str, Any]] = []
 
-    for row in rows:
+    for row in normalized_rows:
         content_hash = _compute_content_hash(row)
         enriched_row = {
             "source_reference": source_reference,
@@ -191,36 +342,47 @@ async def insert_rows_deduplicated(
         }
         enriched_rows.append(enriched_row)
 
-    column_names = list(enriched_rows[0].keys())
-    column_list = ", ".join(column_names)
+    escaped_reference = _escape_sql_string(source_reference)
+    hash_query = (
+        f"SELECT content_hash FROM {table_name} "
+        f"WHERE source_reference = '{escaped_reference}'"
+    )
+    hash_result = await client.query(hash_query)
+    existing_hashes = {row[0] for row in hash_result.result_rows}
+
+    new_rows = [
+        enriched_row
+        for enriched_row in enriched_rows
+        if enriched_row["content_hash"] not in existing_hashes
+    ]
+    rows_skipped = len(enriched_rows) - len(new_rows)
 
     logger.info(
-        "Inserting up to %d row(s) into '%s' (with deduplication)",
-        len(enriched_rows),
+        "Inserting up to %d row(s) into '%s' (with deduplication, %d duplicate(s) skipped)",
+        len(new_rows),
         table_name,
+        rows_skipped,
     )
 
-    rows_written = 0
-    rows_skipped = 0
-    for enriched_row in enriched_rows:
-        values = ", ".join(
-            f"'{str(enriched_row[col]).replace(chr(39), chr(39) + chr(39))}'"
-            for col in column_names
-        )
-        sql = (
-            f"INSERT INTO {table_name} ({column_list}) "
-            f"SELECT {values} "
-            f"WHERE ('{enriched_row['source_reference']}', '{enriched_row['content_hash']}') "
-            f"NOT IN (SELECT source_reference, content_hash FROM {table_name})"
-        )
-        result = await client.command(sql)
-        # clickhouse-connect returns the number of rows written for INSERT statements
-        written = result if isinstance(result, int) else 1
-        if written:
-            rows_written += 1
-        else:
-            rows_skipped += 1
+    if not new_rows:
+        logger.info("Write complete for '%s': 0 inserted, %d duplicate(s) skipped", table_name, rows_skipped)
+        return 0
 
+    insert_column_order = [
+        column_name
+        for column_name in column_types
+        if column_name in new_rows[0]
+    ]
+    insert_data = [
+        [
+            coerce_cell_value(row.get(column_name), column_types[column_name])
+            for column_name in insert_column_order
+        ]
+        for row in new_rows
+    ]
+    await client.insert(table_name, insert_data, column_names=insert_column_order)
+
+    rows_written = len(new_rows)
     logger.info(
         "Write complete for '%s': %d inserted, %d duplicate(s) skipped",
         table_name,

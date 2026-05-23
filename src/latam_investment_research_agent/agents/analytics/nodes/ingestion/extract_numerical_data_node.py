@@ -33,19 +33,15 @@ async def extract_numerical_data_node(
         llm: A ``BaseChatModel`` instance injected by the graph factory.
 
     Returns:
-        A dict with ``extracted_datasets`` (list[ExtractedDataset]) and
-        ``current_dataset_index`` initialised to 0.
+        A dict with ``extracted_datasets`` (list[ExtractedDataset]).
     """
     raw_content: str | None = state.get("raw_content")
 
     if raw_content is None:
         logger.warning("raw_content is None; skipping extraction.")
-        return {"extracted_datasets": [], "current_dataset_index": 0}
+        return {"extracted_datasets": []}
 
     extracted_datasets: list[ExtractedDataset] = await extract_datasets(raw_content, llm)
     logger.info("Extracted %d datasets from document.", len(extracted_datasets))
 
-    return {
-        "extracted_datasets": extracted_datasets,
-        "current_dataset_index": 0,
-    }
+    return {"extracted_datasets": extracted_datasets}

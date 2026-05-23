@@ -8,18 +8,15 @@ Graph flow::
 
     START
       → fetch_document
-      → extract_numerical_data  ── (0 datasets) ──────────────────────────┐
-      → route_dataset          ◄──────────────────┐                       │
-      → write_to_clickhouse    ──────────────────► │ (loops while remain) │
-      → build_ingestion_summary ◄──────────────────────────────────────── ┘
+      → extract_numerical_data  ── (0 datasets) ──► build_ingestion_summary
+      → persist_datasets        ── (all datasets in parallel)
+      → build_ingestion_summary
     END
 
 A conditional edge after ``fetch_document`` routes directly to
 ``build_ingestion_summary`` on fatal fetch failure (``error`` set in state).
 A conditional edge after ``extract_numerical_data`` routes directly to
 ``build_ingestion_summary`` when no datasets were extracted (empty list).
-A conditional edge after ``write_to_clickhouse`` routes back to
-``route_dataset`` while ``current_dataset_index < len(extracted_datasets)``.
 """
 
 from __future__ import annotations
@@ -42,11 +39,8 @@ from latam_investment_research_agent.agents.analytics.nodes.ingestion.extract_nu
 from latam_investment_research_agent.agents.analytics.nodes.ingestion.fetch_document_node import (
     fetch_document_node,
 )
-from latam_investment_research_agent.agents.analytics.nodes.ingestion.route_dataset_node import (
-    route_dataset_node,
-)
-from latam_investment_research_agent.agents.analytics.nodes.ingestion.write_to_clickhouse_node import (
-    write_to_clickhouse_node,
+from latam_investment_research_agent.agents.analytics.nodes.ingestion.persist_datasets_node import (
+    persist_datasets_node,
 )
 from latam_investment_research_agent.agents.analytics.providers.llm_provider import (
     create_llm_provider,
@@ -73,39 +67,20 @@ def _should_continue_after_fetch(
 
 def _should_continue_after_extraction(
     state: IngestionState,
-) -> Literal["route_dataset", "build_ingestion_summary"]:
+) -> Literal["persist_datasets", "build_ingestion_summary"]:
     """Route after extract_numerical_data: skip to summary when nothing was found.
 
     Args:
         state: Current graph state.
 
     Returns:
-        ``"route_dataset"`` when at least one dataset was extracted;
+        ``"persist_datasets"`` when at least one dataset was extracted;
         ``"build_ingestion_summary"`` when the list is empty.
     """
     if not state.get("extracted_datasets"):
         logger.info("No datasets extracted — routing directly to summary.")
         return "build_ingestion_summary"
-    return "route_dataset"
-
-
-def _should_continue_dataset_loop(
-    state: IngestionState,
-) -> Literal["route_dataset", "build_ingestion_summary"]:
-    """Route after write_to_clickhouse: loop or finish.
-
-    Args:
-        state: Current graph state.
-
-    Returns:
-        ``"route_dataset"`` while more datasets remain;
-        ``"build_ingestion_summary"`` when all are processed.
-    """
-    current_index: int = state.get("current_dataset_index", 0)
-    extracted_datasets = state.get("extracted_datasets", [])
-    if current_index < len(extracted_datasets):
-        return "route_dataset"
-    return "build_ingestion_summary"
+    return "persist_datasets"
 
 
 def build_ingestion_graph(
@@ -141,12 +116,8 @@ def build_ingestion_graph(
         functools.partial(extract_numerical_data_node, llm=llm),
     )
     graph_builder.add_node(
-        "route_dataset",
-        functools.partial(route_dataset_node, llm=llm, clickhouse_client=clickhouse_client),
-    )
-    graph_builder.add_node(
-        "write_to_clickhouse",
-        functools.partial(write_to_clickhouse_node, clickhouse_client=clickhouse_client),
+        "persist_datasets",
+        functools.partial(persist_datasets_node, llm=llm, clickhouse_client=clickhouse_client),
     )
     graph_builder.add_node("build_ingestion_summary", build_ingestion_summary_node)
 
@@ -163,19 +134,11 @@ def build_ingestion_graph(
         "extract_numerical_data",
         _should_continue_after_extraction,
         {
-            "route_dataset": "route_dataset",
+            "persist_datasets": "persist_datasets",
             "build_ingestion_summary": "build_ingestion_summary",
         },
     )
-    graph_builder.add_edge("route_dataset", "write_to_clickhouse")
-    graph_builder.add_conditional_edges(
-        "write_to_clickhouse",
-        _should_continue_dataset_loop,
-        {
-            "route_dataset": "route_dataset",
-            "build_ingestion_summary": "build_ingestion_summary",
-        },
-    )
+    graph_builder.add_edge("persist_datasets", "build_ingestion_summary")
     graph_builder.add_edge("build_ingestion_summary", END)
 
     return graph_builder.compile()

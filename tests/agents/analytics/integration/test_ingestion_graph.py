@@ -113,22 +113,22 @@ async def test_ingestion_graph_pdf_url_produces_ingestion_summary(
         ),
         patch(
             "latam_investment_research_agent.agents.analytics.nodes.ingestion"
-            ".route_dataset_node.get_all_table_schemas",
+            ".persist_datasets_node.get_all_table_schemas",
             new=AsyncMock(return_value=[]),
         ),
         patch(
             "latam_investment_research_agent.agents.analytics.nodes.ingestion"
-            ".route_dataset_node.route_dataset",
+            ".persist_datasets_node.route_dataset",
             new=AsyncMock(return_value=routing_decision),
         ),
         patch(
-            "latam_investment_research_agent.agents.analytics.repositories"
-            ".clickhouse_repository.create_table",
+            "latam_investment_research_agent.agents.analytics.nodes.ingestion"
+            ".persist_datasets_node.create_tables_parallel",
             new=AsyncMock(return_value=None),
         ),
         patch(
-            "latam_investment_research_agent.agents.analytics.repositories"
-            ".clickhouse_repository.insert_rows_deduplicated",
+            "latam_investment_research_agent.agents.analytics.nodes.ingestion"
+            ".persist_datasets_node.insert_rows_deduplicated",
             new=AsyncMock(return_value=1),
         ),
     ):
@@ -213,22 +213,22 @@ async def test_ingestion_graph_idempotency_no_duplicate_rows(
         ),
         patch(
             "latam_investment_research_agent.agents.analytics.nodes.ingestion"
-            ".route_dataset_node.get_all_table_schemas",
+            ".persist_datasets_node.get_all_table_schemas",
             new=AsyncMock(return_value=[]),
         ),
         patch(
             "latam_investment_research_agent.agents.analytics.nodes.ingestion"
-            ".route_dataset_node.route_dataset",
+            ".persist_datasets_node.route_dataset",
             new=AsyncMock(return_value=routing_decision),
         ),
         patch(
             "latam_investment_research_agent.agents.analytics.nodes.ingestion"
-            ".write_to_clickhouse_node.alter_table_add_columns",
+            ".persist_datasets_node.alter_tables_parallel",
             new=AsyncMock(return_value=None),
         ),
         patch(
             "latam_investment_research_agent.agents.analytics.nodes.ingestion"
-            ".write_to_clickhouse_node.insert_rows_deduplicated",
+            ".persist_datasets_node.insert_rows_deduplicated",
             new=insert_mock,
         ),
     ):
@@ -284,22 +284,22 @@ async def test_ingestion_graph_partial_write_failure_captured(
         ),
         patch(
             "latam_investment_research_agent.agents.analytics.nodes.ingestion"
-            ".route_dataset_node.get_all_table_schemas",
+            ".persist_datasets_node.get_all_table_schemas",
             new=AsyncMock(return_value=[]),
         ),
         patch(
             "latam_investment_research_agent.agents.analytics.nodes.ingestion"
-            ".route_dataset_node.route_dataset",
+            ".persist_datasets_node.route_dataset",
             new=AsyncMock(return_value=routing_create),
         ),
         patch(
             "latam_investment_research_agent.agents.analytics.nodes.ingestion"
-            ".write_to_clickhouse_node.create_table",
+            ".persist_datasets_node.create_tables_parallel",
             new=AsyncMock(return_value=None),
         ),
         patch(
             "latam_investment_research_agent.agents.analytics.nodes.ingestion"
-            ".write_to_clickhouse_node.insert_rows_deduplicated",
+            ".persist_datasets_node.insert_rows_deduplicated",
             new=flaky_insert,
         ),
     ):
@@ -350,22 +350,22 @@ async def test_ingestion_graph_html_source_reference_preserved(
         ),
         patch(
             "latam_investment_research_agent.agents.analytics.nodes.ingestion"
-            ".route_dataset_node.get_all_table_schemas",
+            ".persist_datasets_node.get_all_table_schemas",
             new=AsyncMock(return_value=[]),
         ),
         patch(
             "latam_investment_research_agent.agents.analytics.nodes.ingestion"
-            ".route_dataset_node.route_dataset",
+            ".persist_datasets_node.route_dataset",
             new=AsyncMock(return_value=routing_decision),
         ),
         patch(
             "latam_investment_research_agent.agents.analytics.nodes.ingestion"
-            ".write_to_clickhouse_node.create_table",
+            ".persist_datasets_node.create_tables_parallel",
             new=AsyncMock(return_value=None),
         ),
         patch(
             "latam_investment_research_agent.agents.analytics.nodes.ingestion"
-            ".write_to_clickhouse_node.insert_rows_deduplicated",
+            ".persist_datasets_node.insert_rows_deduplicated",
             new=AsyncMock(return_value=2),
         ),
     ):

@@ -41,9 +41,11 @@ RULES:
    columns.
 3. proposed_schema MUST NOT include these reserved audit columns:
    {", ".join(MANDATORY_AUDIT_COLUMNS)}
-4. Column names in proposed_schema MUST be snake_case with no abbreviations.
-5. Use Decimal(18,4) for monetary values, Float64 for ratios/percentages, String for text,
-   UInt16 or UInt32 for years/counts.
+4. Column names in proposed_schema MUST be snake_case, match the dataset row keys exactly
+   (including year columns such as col_2023, col_2024 when years appear as headers).
+5. Prefer String for any column that may contain percentages, dates, labels, mixed text,
+   or locale-formatted numbers. Use Decimal(18,4) only for strictly numeric monetary columns
+   with clean numeric values in every row.
 6. Consider cross-language equivalence: Portuguese labels may match English table names."""
 
 
