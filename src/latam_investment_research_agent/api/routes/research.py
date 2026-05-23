@@ -40,8 +40,10 @@ async def run_research_and_ingest_endpoint(
     pipeline: ResearchPipeline = Depends(get_pipeline),
 ) -> ResearchWithIngestionResponse:
     """
-    Run the research pipeline, then ingest each returned document into ClickHouse.
+    Run the research pipeline, then ingest each returned document into ClickHouse
+    and the Senso knowledge base.
 
-    Document ingestion runs concurrently — one async task per unique source URL.
+    Both backends ingest concurrently — one async task per unique source URL, with
+    ClickHouse and Senso work running in parallel.
     """
     return await run_research_and_ingest(body, pipeline)

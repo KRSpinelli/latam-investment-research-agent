@@ -14,9 +14,8 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .client import SensoClient
-from .companies import BY_TICKER
 from .document_fetch import fetch_text_from_url
-from .kb_scaffold import FolderMap, scaffold_kb
+from .kb_scaffold import GENERAL_FOLDER_KEY, FolderMap, scaffold_kb
 
 FILING_TYPES = {
     "FR": "Formulario de Referencia",
@@ -47,7 +46,31 @@ class FilingMetadata:
         return FILING_TYPES.get(self.filing_type, self.filing_type)
 
     def document_title(self) -> str:
-        return f"{self.ticker} — {self.filing_type_label} {self.period_label}"
+        subject = self.ticker if self.ticker else "Market research"
+        return f"{subject} — {self.filing_type_label} {self.period_label}"
+
+
+def _resolve_folder_id(folder_map: FolderMap, ticker: str) -> str:
+    """Pick a company folder when registered, otherwise the general research folder.
+
+    Args:
+        folder_map: Map of ticker (or ``GENERAL``) to Senso folder node IDs.
+        ticker: Optional company ticker from metadata.
+
+    Returns:
+        Senso KB folder node ID to receive the document.
+
+    Raises:
+        KeyError: If neither a matching ticker folder nor the general folder exists.
+    """
+    if ticker and ticker in folder_map:
+        return folder_map[ticker]
+    general_folder_id = folder_map.get(GENERAL_FOLDER_KEY)
+    if general_folder_id:
+        return general_folder_id
+    raise KeyError(
+        f"No KB folder for ticker {ticker!r} and no {GENERAL_FOLDER_KEY!r} folder in map"
+    )
 
 
 async def ingest_filing(
@@ -70,17 +93,10 @@ async def ingest_filing(
     """
     c = client or SensoClient()
 
-    if BY_TICKER.get(metadata.ticker) is None:
-        raise ValueError(
-            f"Unknown ticker {metadata.ticker!r} — add it to companies.py first"
-        )
-
     if folder_map is None:
         folder_map = await scaffold_kb(c)
 
-    folder_id = folder_map.get(metadata.ticker)
-    if not folder_id:
-        raise KeyError(f"No KB folder found for ticker {metadata.ticker!r}")
+    folder_id = _resolve_folder_id(folder_map, metadata.ticker)
 
     return await c.kb_create_raw(
         title=metadata.document_title(),
@@ -113,8 +129,7 @@ async def ingest_from_url(
     Raises:
         DocumentFetchError: If the URL cannot be fetched or parsed.
         ValueError: If no text could be extracted from the page.
-        ValueError: If ``metadata.ticker`` is not registered in ``companies.py``.
-        KeyError: If no KB folder exists for the ticker.
+        KeyError: If no suitable KB folder exists in the folder map.
     """
     if not metadata.source_url:
         metadata = FilingMetadata(

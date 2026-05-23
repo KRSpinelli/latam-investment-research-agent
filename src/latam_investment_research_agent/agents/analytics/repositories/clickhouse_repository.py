@@ -18,6 +18,8 @@ from datetime import UTC, datetime
 from typing import Any
 
 from latam_investment_research_agent.agents.analytics.constants import (
+    CLICKHOUSE_ALTER_MAX_RETRIES,
+    CLICKHOUSE_ALTER_RETRY_BASE_DELAY_SECONDS,
     CLICKHOUSE_ORDER_BY_COLUMNS,
     CLICKHOUSE_TABLE_ENGINE,
     MANDATORY_AUDIT_COLUMNS,
@@ -30,6 +32,63 @@ from latam_investment_research_agent.agents.analytics.repositories.row_preparati
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _is_clickhouse_alter_retryable(error: BaseException) -> bool:
+    """Return True when ClickHouse Cloud suggests retrying an ``ALTER`` (code 517).
+
+    Args:
+        error: Exception raised by clickhouse_connect.
+
+    Returns:
+        True if the error message indicates a transient replica metadata lag.
+    """
+    message = str(error)
+    return (
+        "CANNOT_ASSIGN_ALTER" in message
+        or "code: 517" in message
+        or "doesn't catchup with latest ALTER" in message
+    )
+
+
+async def _run_clickhouse_command_with_alter_retry(
+    client: Any,
+    sql: str,
+    *,
+    operation_label: str,
+) -> None:
+    """Run a ClickHouse command, retrying transient ``ALTER`` replica lag errors.
+
+    Args:
+        client: An async-compatible clickhouse_connect client instance.
+        sql: SQL statement to execute.
+        operation_label: Short description for log messages.
+
+    Raises:
+        Exception: The last error if all retry attempts are exhausted.
+    """
+    for attempt in range(1, CLICKHOUSE_ALTER_MAX_RETRIES + 1):
+        try:
+            await client.command(sql)
+            return
+        except Exception as error:
+            if (
+                not _is_clickhouse_alter_retryable(error)
+                or attempt >= CLICKHOUSE_ALTER_MAX_RETRIES
+            ):
+                raise
+            delay_seconds = CLICKHOUSE_ALTER_RETRY_BASE_DELAY_SECONDS * (
+                2 ** (attempt - 1)
+            )
+            logger.warning(
+                "ClickHouse ALTER retry %d/%d for %s: %s; sleeping %.1fs",
+                attempt,
+                CLICKHOUSE_ALTER_MAX_RETRIES,
+                operation_label,
+                error,
+                delay_seconds,
+            )
+            await asyncio.sleep(delay_seconds)
 
 
 def _format_clickhouse_datetime64_utc(moment: datetime) -> str:
@@ -228,7 +287,11 @@ async def _alter_table_add_single_column(
         column.clickhouse_type,
         table_name,
     )
-    await client.command(sql)
+    await _run_clickhouse_command_with_alter_retry(
+        client,
+        sql,
+        operation_label=f"ADD COLUMN {column.column_name} on {table_name}",
+    )
 
 
 async def alter_table_add_columns(
@@ -249,12 +312,8 @@ async def alter_table_add_columns(
     """
     if not new_columns:
         return
-    await asyncio.gather(
-        *[
-            _alter_table_add_single_column(client, table_name, column)
-            for column in new_columns
-        ]
-    )
+    for column in new_columns:
+        await _alter_table_add_single_column(client, table_name, column)
 
 
 async def create_tables_parallel(
