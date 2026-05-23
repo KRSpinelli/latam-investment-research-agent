@@ -17,11 +17,22 @@ def run_api() -> None:
     host = os.getenv("API_HOST", "0.0.0.0")
     port = int(os.getenv("API_PORT", "8000"))
     reload = os.getenv("APP_ENV", "development") == "development"
+    # Report jobs write charts/PDFs under exports/; exclude from reload watching
+    # or uvicorn restarts mid-job and clients see "connection reset by peer".
+    reload_excludes = [
+        "exports",
+        "exports/**",
+        "**/*.pdf",
+        "**/*.png",
+        ".git",
+        ".venv",
+    ]
     uvicorn.run(
         "latam_investment_research_agent.api.app:app",
         host=host,
         port=port,
         reload=reload,
+        reload_excludes=reload_excludes if reload else None,
     )
 
 

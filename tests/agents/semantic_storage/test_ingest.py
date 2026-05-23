@@ -43,3 +43,17 @@ def test_document_title_without_ticker() -> None:
     )
 
     assert metadata.document_title() == "Market research — News Article 2024"
+
+
+def test_document_title_includes_url_slug_for_uniqueness() -> None:
+    metadata = FilingMetadata(
+        ticker="",
+        filing_type="NEWS",
+        fiscal_year=2024,
+        source_url="https://datamarnews.com/noticias/brazil-coffee-exports/",
+    )
+
+    assert metadata.document_title() == (
+        "Market research — News Article 2024 — "
+        "datamarnews.com/brazil-coffee-exports"
+    )

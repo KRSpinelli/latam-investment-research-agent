@@ -23,6 +23,8 @@ dependencies = [
   "python-dotenv>=1.0.0",
   "aiohttp>=3.13.5",
   "x402[fastapi]>=2.11.0",
+  "matplotlib>=3.9",
+  "reportlab>=4.2",
 ]
 
 [project.optional-dependencies]
